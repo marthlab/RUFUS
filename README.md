@@ -25,7 +25,7 @@ RUFUS has two stages: a variant calling stage, and a post-processing stage. Sepa
 
  The pre-built RUFUS singularity container may be obtained from Zenodo. To download:
 ```
-curl "https:zenodo.org/record/XXXXXXX/files/rufus.sif" -o rufus.sif
+curl "https://zenodo.org/records/13769806/files/rufus_v1.0.0-beta" -o rufus.sif
 ```
 
 ### Input Data
