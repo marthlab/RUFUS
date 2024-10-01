@@ -43,16 +43,20 @@ for CONTROL in "${CONTROL_BAM_LIST[@]}"; do
     fi
     
     #run pileup and call variants
-	
-	#bcftools query -f '%CHROM\t%POS0\t%POS\n' $NORMED_VCF > $NORMED_BED
-	#PILEUP_VCF="pileup.vcf"
 	MERGED_PILEUP="merged_pileup.vcf"
 	echo "Starting parallel mpileup..."
-	# TODO: put back in after debugging
-	#bcftools query -f '%CHROM\n' $NORMED_VCF | sort | uniq > regions.out
-	bcftools query -f '%CHROM\t%POS0\t%POS\n' $NORMED_VCF | sort | uniq | \
-	awk -v bam="$CONTROL_BAM" -v ref="$REFERENCE_FILE" '{print $1 "\t" $2 "\t" $3 "\t" bam "\t" ref}' > arguments.txt
-	cat arguments.txt | parallel -j +0 --colsep '\t' bash $PILEUP_SCRIPT {1} {2} {3} {4} {5}
+	
+	# Split pileup by chromosomes
+	bcftools query -f '%CHROM\n' $NORMED_VCF | sort | uniq | \
+	awk -v bam="$CONTROL_BAM" -v ref="$REFERENCE_FILE" '{print $1 "\t" bam "\t" ref}' > arguments.txt
+	cat arguments.txt | parallel -j +0 --colsep '\t' bash $PILEUP_SCRIPT {1} {2} {3}
+	
+	# TODO: if we have a small amount of sites, might be more efficient to do this, bricks if too many though
+	# Split pileup by sites
+	#bcftools query -f '%CHROM\t%POS0\t%POS\n' $NORMED_VCF | sort | uniq | \
+	#awk -v bam="$CONTROL_BAM" -v ref="$REFERENCE_FILE" '{print $1 "\t" $2 "\t" $3 "\t" bam "\t" ref}' > arguments.txt
+	# NOTE: have to do out of order now, because single pileup start and end are optional
+	#cat arguments.txt | parallel -j +0 --colsep '\t' bash $PILEUP_SCRIPT {1} {4} {5} {2} {3}
 
 	# combine pileups
 	bcftools concat -o $MERGED_PILEUP -Ov mpileup*.vcf
@@ -60,8 +64,10 @@ for CONTROL in "${CONTROL_BAM_LIST[@]}"; do
 	bgzip "sorted.$MERGED_PILEUP"
 	bcftools index "sorted.$MERGED_PILEUP.gz"
 	rm $MERGED_PILEUP
-	rm mpileup_*.vcf
-	rm arguments.txt		
+	
+	#TODO: comment back in after testing
+	#rm mpileup_*.vcf
+	#rm arguments.txt		
 
 	# call variants from merged pileup vcf
 	echo "Starting pileup call..."

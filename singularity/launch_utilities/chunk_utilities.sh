@@ -14,50 +14,42 @@ function get_chunk_region() {
   local chunkSize=$2
   local build=$3
 
+  # Convert chunk size to bp (input as kbp)
   local adjusted_size=$((chunkSize * 1000))
 
+  # Get chroms and lengths according to build
+  local -a chrom_arr
+  get_chroms chrom_arr "$build"
   local -a chrom_lengths
   get_lengths "$build" chrom_lengths
 
-  local -a chrom_arr
-  get_chroms chrom_arr "$build"
-
-  # Calculate chromosome and coordinates for the given chunk
-  chunkStart=0
-  chunkEnd=0
-
-  # Calculate the absolute coordinate of the chunk
-  absCoord=$((chunkNum * adjusted_size))
+  # Create chunk table corresponding to lengths and chunk size
+  local -a chunk_table
+  get_chunk_table "$adjusted_size" "$build" chunk_table
 
   # Find the chromosome that the chunk is in
-  idx=0
-  remainder=$((absCoord - chrom_lengths[idx]))
-  while ((remainder > 0)); do
-    idx=$((idx + 1))
-    remainder=$((remainder - chrom_lengths[idx]))
+  chr_idx=0
+  curr_chunk=${chunk_table[chr_idx]}
+  leftover=$((chunkNum - curr_chunk))
+  while [ "$leftover" -ge 0 ]; do
+    chr_idx=$((chr_idx + 1))
+    curr_chunk=${chunk_table[chr_idx]}
+    leftover=$((leftover - curr_chunk))
   done
-  # Translate idx into chr
-  chr="chr${chrom_arr[idx]}"
+  chr="chr${chrom_arr[chr_idx]}"
 
-  # Get remainder back to positive
-  remainder=$((remainder + chrom_lengths[idx]))
+#  # Get the leftover back to the positive range
+  leftover=$((leftover + curr_chunk))
 
   # Calculate the start and end of the chunk
-  multiplier=$((remainder/adjusted_size))
-  chunkStart=$((multiplier * adjusted_size))
-  if [[ $chunkStart -eq 0 ]]; then
-    chunkStart=1
-  else
-	chunkStart=$((chunkStart + 1))
+  local chunkStart=$((leftover * adjusted_size + 1))
+  local chunkEnd=$((chunkStart + adjusted_size - 1))
+  curr_length=${chrom_lengths[chr_idx]}
+  if [ "$chunkEnd" -gt "$curr_length" ]; then
+    chunkEnd=${chrom_lengths[chr_idx]}
   fi
 
-  chunkEnd=$((chunkStart + adjusted_size -1))
-
-  # Adjust the end of the chunk if it exceeds the chromosome length
-  if ((chunkEnd > chrom_lengths[idx])); then
-    chunkEnd=$((chrom_lengths[idx]))
-  fi
-
+  # Write out
   echo "$chr:${chunkStart}-${chunkEnd}"
 }
 

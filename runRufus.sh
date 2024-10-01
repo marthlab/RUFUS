@@ -19,12 +19,28 @@ set -e
 # Generated online by https://argbash.io/generate
 
 start_time=$(date +"%s")
-echo "RUFUS version C.0.1"
+echo "RUFUS version V1.0.0-gamma-ip"
 echo -e "RUFUS command was: $0 $@"
 date
 
 MaxHashDepth=1200; #need to make this a passed option
 RDIR=/opt/RUFUS
+##########################__SET_EXECUTABLE_PATHS__##############################
+RUFUSmodel=$RDIR/bin/ModelDist
+RUFUSfilter=$RDIR/bin/RUFUS.Filter
+RufAlu=$RDIR/bin/externals/rufalu/src/rufalu_project/src/aluDetect
+RUFUSOverlap=$RDIR/scripts/Overlap.shorter.sh
+RunJelly=$RDIR/scripts/RunJellyForRUFUS.sh
+PullSampleHashes=$RDIR/scripts/CheckJellyHashList.sh
+RemoveCoInheritedVars=$RDIR/scripts/remove_coinherited.sh
+modifiedJelly=$RDIR/bin/externals/modified_jellyfish/src/modified_jellyfish_project/bin/jellyfish
+bwa=$RDIR/bin/externals/bwa/src/bwa_project/bwa
+RUFUSfilterFASTQ=$RDIR/bin/RUFUS.Filter
+RUFUSfilterFASTQse=$RDIR/bin/RUFUS.Filter.single
+fastp=$RDIR/bin/externals/fastp/src/fastp_project/fastp
+samblaster=$RDIR/bin/externals/samblaster/src/samblaster_project/samblaster
+############################################################################################
+
 BOUND_DATA_DIR=/mnt
 cd $BOUND_DATA_DIR
 
@@ -71,6 +87,8 @@ _filterMinQ=15
 _arg_stop="nope"
 _arg_dev_reporting="FALSE"
 _arg_dev_file_output="FALSE"
+_arg_slurm_array_index=0
+_arg_abs_coord_index=0
 print_help ()
 {
 	printf "%s\n" "The general script's help msg"
@@ -134,7 +152,9 @@ s-n>] ...\n' "$0"
 	printf "\t\t%s\n" "This can be useful when you know you have low level contamination and want to remove kmers up to a certain count"
 	printf "\t%s\n" "-h,--help: HELP!!!!!!!!!!!!!!!"
 	printf "\t%s\n" "-d,--devhelp: HELP!!! for developers"
-	
+	printf "\t%s\n" "-pa,--passArray: pass the slurm array index to the script for debugging purposes"
+	printf "\t%s\n" "-cn,--currAbsNum: pass the calculated absolute coordinate value to the script for debugging purposes"
+
 }
 re='^[0-9]+$'; 
 parse_commandline ()
@@ -289,7 +309,25 @@ parse_commandline ()
 			exit 100
 		fi
 		shift
-		;;	
+		;;
+	-pa|--passArray)
+	  test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+		_arg_slurm_array_index=$2
+		if ! [[ $_arg_slurm_array_index =~ $re ]] ; then
+      echo "arg -pa or --passArray must be a number "
+      exit 100
+    fi
+    shift
+		;;
+  -cn|--currAbsNum)
+    test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+    _arg_abs_coord_index=$2
+    if ! [[ $_arg_abs_coord_index =~ $re ]] ; then
+      echo "arg -cn or --currAbsNum must be a number "
+      exit 100
+    fi
+    shift
+    ;;
 	-i|--saliva)
 		_arg_saliva="TRUE"
 		echo "INFO: Saliva subject sample provided"
@@ -356,10 +394,6 @@ parse_commandline ()
 	-z)
 		_arg_dev_file_output="TRUE"
 		echo "Retain all intermediate files created by RUFUS run"
-		;;
-	-local)
-		# TODO: get rid of this before publication
-		RDIR=/home/ubuntu/RUFUS
 		;;
 	-CLEAN)
 		echo "Cleaning up intermediate files";
@@ -550,7 +584,7 @@ fi
 if [ "$BUILD_REFS" = "TRUE" ]; then
 	echo "Missing reference file indexes needed for BWA... Generating... "
 	fasta_idx=$(basename ${_arg_ref})
-	bwa index -a bwtsw $fasta_idx
+	$bwa index -a bwtsw $fasta_idx
 	samtools faidx $fasta_idx
 fi
 
@@ -586,11 +620,14 @@ else
     _arg_ref_bwa=$_arg_ref
 fi
 
-
 #echo "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 #echo "Reference supplied: " "$_arg_ref"
 #echo "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
 
+echo -e "slurm array index is: $_arg_slurm_array_index"
+echo -e "absolute coordinate index is: $_arg_abs_coord_index"
+echo -e "slurm array index is: $_arg_slurm_array_index" >&2
+echo -e "absolute coordinate index is: $_arg_abs_coord_index" >&2
 
 
 #########__CREATE_ALL_GENERATOR_FILES_AND_VARIABLES__#############
@@ -748,26 +785,6 @@ do
 done
 
 ##################################################
-
-
-
-##########################__SET_EXECUTABLE_PATHS__##############################
-RUFUSmodel=$RDIR/bin/ModelDist
-RUFUSfilter=$RDIR/bin/RUFUS.Filter
-RufAlu=$RDIR/bin/externals/rufalu/src/rufalu_project/src/aluDetect
-RUFUSOverlap=$RDIR/scripts/Overlap.shorter.sh
-RunJelly=$RDIR/scripts/RunJellyForRUFUS.sh
-PullSampleHashes=$RDIR/scripts/CheckJellyHashList.sh
-RemoveCoInheritedVars=$RDIR/scripts/remove_coinherited.sh
-modifiedJelly=$RDIR/bin/externals/modified_jellyfish/src/modified_jellyfish_project/bin/jellyfish
-bwa=$RDIR/bin/externals/bwa/src/bwa_project/bwa
-RUFUSfilterFASTQ=$RDIR/bin/RUFUS.Filter
-RUFUSfilterFASTQse=$RDIR/bin/RUFUS.Filter.single
-fastp=$RDIR/bin/externals/fastp/src/fastp_project/fastp
-samblaster=$RDIR/bin/externals/samblaster/src/samblaster_project/samblaster
-############################################################################################
-
-
 
 
 ####################__GENERATE_JHASH_FILES_FROM_JELLYFISH__#####################

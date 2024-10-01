@@ -29,6 +29,25 @@ function get_lengths() {
   esac
 }
 
+# Returns the number of chunks for each chromosome given the chunk size
+function get_chunk_table() {
+  local chunk_size=$1
+  local build=$2
+  local -n local_chunk_table=$3
+
+  # Get chrom lengths
+  local -a local_lengths
+  get_lengths "$build" local_lengths
+
+  for length in "${local_lengths[@]}"; do
+    local num_chunks=$((length / chunk_size))
+    if ((length % chunk_size != 0)); then
+      num_chunks=$((num_chunks + 1))
+    fi
+    local_chunk_table+=($num_chunks)
+  done
+}
+
 function get_ref_path() {
 	local build=$1
 
