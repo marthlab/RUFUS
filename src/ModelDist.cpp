@@ -537,6 +537,7 @@ int main(int argc, char* argv[]) {
 			count++;
 			double values[9];
 
+// THREADS TODO: pass in $Threads variable instead of hardcoding 11
 #pragma omp parallel for num_threads(11)
 			for (int x = 0; x <= 10; x++) {
 				values[x] =
@@ -572,6 +573,7 @@ int main(int argc, char* argv[]) {
 			count++;
 			double values[9];
 
+// THREADS TODO: pass in $Threads variable instead of hardcoding 11
 #pragma omp parallel for num_threads(11)
 			for (int x = 0; x <= 10; x++) {
 				values[x] = testModel(SClow + ((SChigh - SClow) / 10) * x, bestS, bestF,
@@ -604,6 +606,7 @@ int main(int argc, char* argv[]) {
 			count++;
 			double values[9];
 
+// THREADS TODO: pass in $Threads variable instead of hardcoding 11
 #pragma omp parallel for num_threads(11)
 			for (int x = 0; x <= 10; x++) {
 				values[x] =
@@ -640,6 +643,7 @@ int main(int argc, char* argv[]) {
 			count++;
 			double values[9];
 
+// THREADS TODO: pass in $Threads variable instead of hardcoding 11
 #pragma omp parallel for num_threads(11)
 			for (int x = 0; x <= 10; x++) {
 				values[x] = testModelLog(bestSC, bestS, bestF,
@@ -680,6 +684,7 @@ int main(int argc, char* argv[]) {
 			count++;
 			double values[9];
 
+// THREADS TODO: pass in $Threads variable instead of hardcoding 11
 #pragma omp parallel for num_threads(11)
 			for (int x = 0; x <= 10; x++) {
 				values[x] = testModelLog(bestSC, bestS, bestF, bestSK,

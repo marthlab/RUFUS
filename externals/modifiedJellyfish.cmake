@@ -7,7 +7,16 @@ SET(MODIFIED_JELLYFISH_LIB)
 
 
 ExternalProject_Add(${MODIFIED_JELLYFISH_PROJECT}
-	URL ${PROJECT_SOURCE_DIR}/src/modifiedJellyfish.tar.gz
+	# Source lives in the src/modifiedJellyfish git submodule (repo: stefinfection/modified-jellyfish).
+	# Copy it into the build tree and build there (BUILD_IN_SOURCE) so the tracked submodule working
+	# copy stays pristine -- no configure/make artifacts leak back into it.
+	DOWNLOAD_COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_SOURCE_DIR}/src/modifiedJellyfish ${PROJECT_SOURCE_DIR}/bin/externals/modified_jellyfish/src/modified_jellyfish_project
+
+	# git checkout / copy_directory reset file mtimes, so make would see configure as older than
+	# configure.ac and try to regenerate it with autoconf (which fails). Touch the generated
+	# autotools files AFTER their sources so they look up-to-date and no regeneration is attempted.
+	# (The old tarball path avoided this because tar preserved the original mtime ordering.)
+	PATCH_COMMAND bash -c "touch configure.ac aclocal.m4 && find . -name Makefile.am -exec touch {} + && touch configure config.h.in && find . -name Makefile.in -exec touch {} +"
 
         CONFIGURE_COMMAND ${PROJECT_SOURCE_DIR}/bin/externals/modified_jellyfish/src/modified_jellyfish_project/configure --prefix=${PROJECT_SOURCE_DIR}/bin/externals/modified_jellyfish/src/modified_jellyfish_project/
         BUILD_IN_SOURCE 1

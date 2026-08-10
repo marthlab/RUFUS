@@ -1,0 +1,16 @@
+# Docker COPY does not honor .gitignore, so exclude host build artifacts and bulk here.
+# Keeping the context lean also avoids baking a stale local bin/ build into the image.
+.git
+bin/
+*.sif
+*.o
+temp_dac/
+testRun/
+.idea/
+cmake-build-debug/
+rufus_figure.pdf
+rufus_figure.png
+rufus_figure.py
+rufus_figure.pdf
+src/externals/jellyfish-2.2.5/
+src/externals/gkno_launcher/

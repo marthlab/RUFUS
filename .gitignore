@@ -4,6 +4,25 @@ src/externals/jellyfish-2.2.5/
 src/externals/gkno_launcher/
 cloud/1000G.RUFUSreference.sorted.min45.tab
 *.o
-*test*
-idea/
-idea/*
+# Note: a blanket `*test*` rule used to live here. It silently dropped tracked files whose
+# path contained "test" (our tests/ suite, and modified-jellyfish's tests/ dir), so it was
+# removed. Add narrow, specific ignores here if test scratch output needs excluding.
+# SLURM writes job logs beside the case scripts when you sbatch from tests/functional/cases/.
+# Deliberately path-scoped and extension-scoped -- do NOT broaden these to `*test*` or `*.out`.
+tests/functional/cases/*.out
+tests/functional/cases/*.err
+.idea/
+.idea/*
+cmake-build-debug/*
+cmake-build-debug/
+singularity/rufus_v1.0.0-epsilon.sif
+temp_dac/
+cleanup.sh
+rufus_figure.pdf
+rufus_figure.py
+rufus_figure.png
+tests/one_offs/*
+tests/genome_wide/*
+tests/accuracy/config.sh
+tests/accuracy/*.out
+tests/accuracy/*.err

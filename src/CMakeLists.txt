@@ -33,6 +33,7 @@ add_library(rufus_core STATIC
 	OverlapSam.cpp
 	ReplaceQwithDinFASTQD.cpp
 	RUFUS.Filter.cpp
+	RUFUS.Filter.single.cpp
 	RUFUS.Build.cpp
 	RUFUS.1kg.filter.cpp
 	PassThroughSamCheck.cpp
@@ -102,6 +103,13 @@ add_executable(RUFUS.Filter
 	RUFUS.Filter.cpp
 )
 target_link_libraries(RUFUS.Filter
+	${RUFUS_UTIL}
+)
+
+add_executable(RUFUS.Filter.single
+	RUFUS.Filter.single.cpp
+)
+target_link_libraries(RUFUS.Filter.single
 	${RUFUS_UTIL}
 )
 

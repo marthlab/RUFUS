@@ -1,4 +1,4 @@
-/*By ANDREW FARRELL
+/*By ANDREW FARRELL; updated by SJG Jul2025
  * Overlap.cpp
  * --------------------------------------------------
  * Assembles k-mers containing variation into contigs
@@ -23,7 +23,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#include <omp.h> 
+#include <omp.h>
 
 #include "Util.h"
 
@@ -31,170 +31,213 @@ using namespace std;
 
 bool FullOut = false;
 
-int RebuildHashTable(vector<string>& sequenes, int Ai, int SearchHash, unordered_map<unsigned long, vector<int>>& Hashes, int Threads, unordered_map<unsigned long, int>& Hashesize) 
+struct OverlapArgs {
+	string FastqIn;
+	float MinPercent;
+    long int MinOverlap;
+    long int MinCoverage;
+	string NameStub;
+    long int hashLength;
+    long int ACT;  // the alignment count threshold (how many times a kmer must be found in the sequences to be considered for alignment)
+	string OverlapStub;
+    long int TrimLCcuttoff;
+    long int Threads;
+	bool verbose = false;
+};
+
+/*
+	Completely clears and builds the Hashes hash table, which has (numeric hash of) kmer as keys and a vector as the value, which contains
+	all indices of full-length reads in "sequences" array that contain that kmer. This needs to be re-populated occassionally to 
+	ensure that the hash table is up to date with the latest sequences after some have been collapsed and moved.
+*/
+int RebuildHashTable(vector<string>& sequences, int Ai, int hashLength, unordered_map<unsigned long, vector<int>>& Hashes, int Threads)
 {
-	cout << "\nDestrying HashTable\n";
+	cout << "\nDestroying HashTable\n";
 	Hashes.clear();
 	cout << "HashTable destroyed\n";
 	cout << "Rebuilding HashTable - starting at " << Ai << endl;
-	int size = sequenes.size();
+	int size = sequences.size();
 
-	#pragma omp parallel for num_threads(12) shared(Hashes)
+	#pragma omp parallel for num_threads(Threads) shared(Hashes, sequences)
 	for (int i = Ai; i < size; i++) {
 
 		if (i % 10000 > 1 && i % 10000 < Threads) {
-			//pragma omp critical (sequenes)
-			{cout << "	 Hashed " << i << " of " << sequenes.size() << "\r";}
-		
+			#pragma omp critical (progressOut) 
+			{
+				cout << "Hashed " << i << " of " << sequences.size() << "\r";
+			}
 		}
-		string Sequence; 
-		//pragma omp critical (sequenes)
-		{Sequence = sequenes[i];}
-		int LoopLimit = Sequence.size() - SearchHash;
+		// Iterate through the sequence and get hashLength sized chunks
+		// If the chunk does NOT have an 'N' in it, add it to the hash table
+		string Sequence = sequences[i];
+		int LoopLimit = Sequence.size() - hashLength;
 		for (int j = 0; j < LoopLimit; j++) {
-			string hash = Sequence.substr(j, SearchHash);
+			string hash = Sequence.substr(j, hashLength);
 			size_t found = hash.find('N');
 			
-			if (found == std::string::npos) {
+			if (found == std::string::npos) {	// npos is a constant for "not found"
 				unsigned long LongHash = Util::HashToLong(hash);
 				unsigned long RevHash = Util::HashToLong(Util::RevComp(hash));
+
+				// Add sequene index to hash table
 				#pragma omp critical(updateHash)
 				{
 					Hashes[LongHash].push_back(i);
 					Hashes[RevHash].push_back(i);
-				} //end pragma??
-			} //end if
-		} 
-	}
-	Hashesize.clear(); 
-	for (auto it = Hashes.begin(); it != Hashes.end(); it++)
-	{
-		Hashesize[it->first] = it->second.size(); 
+				}
+			}
+		}
 	}
 	cout << "\nDone Rebulding HashTable size is " << Hashes.size() << endl;
 	return 0;
 }
 
-int PrepairSearchList(string A, int Ai,	unordered_map<unsigned long, vector<int>>& Hashes,int SearchHash, int ACT, map<int, vector<int>>& array,bool& hitPosLimit, bool& hitIndexLimit, int& NumberPos,	int& NumberIndex , unordered_map<unsigned long, int>& Hashesize) 
+/*
+	For a single sequence, iterates through each kmer of hashLength N and looks to see what sequences it is 
+	contained within (i.e. the indexes of those sequences in "sequences" array).
+	Counts how many times each kmer is found in the sequences, and if it is found more than ACT times,
+	it is considered a candidate for alignment.
+	Stores the results in the array map, which has the index of the sequence as key and a vector of indexes of sequences
+	that contain that kmer as value.
+
+	Note: This function is called within a parallel section from main, hence the critical sections.
+
+	Parameters:
+	A: sequence to search
+	Ai: the index of the sequence in the original list which is not passed here
+	hashLength: the window for creating kmers
+	ACT: the alignment count threshold (how many times a kmer must be found in the sequences to be considered for alignment)
+	Hashes: the hash table containing the kmer as key and a vector of indexes of sequences containing that kmer as value
+*/
+int PrepareSearchList(string A, int Ai,	unordered_map<unsigned long, vector<int>>& Hashes, int hashLength, int ACT, map<int, vector<int>>& array,bool& hitPosLimit, bool& hitIndexLimit, int& NumberPos, int& NumberIndex) 
 {
 	int Alength = A.size();
 	map<int, int> Positions;
 	int added = 0;
 
-	for (int i = 0; i < Alength - SearchHash; i++) {
-		string hash = A.substr(i, SearchHash);
+	// Iterate through each kmer in sequence A
+	for (int i = 0; i < Alength - hashLength; i++) {
+		string hash = A.substr(i, hashLength);
 		size_t found = hash.find('N');
 
 		if (found == std::string::npos) {
+			// Pull out list of sequences that contain this kmer from hash table
 			unsigned long LongHash = Util::HashToLong(hash);
-			int max=0; 
-			
-			#pragma omp atomic 
-				max += Hashesize[LongHash];
-			for (vector<int>::size_type i = 0; i < max; i++) 
+			#pragma omp critical(updateHash) 
 			{
-				int holder = 0; 
-				#pragma omp atomic 
-				holder += Hashes[LongHash][i];
-				if (holder > Ai ){//+ 1) {
+				int numMatches = Hashes[LongHash].size();
+			
+				// Iterate through sequences that contain this kmer
+				for (vector<int>::size_type j = 0; j < numMatches; j++) {
+					int holder = Hashes[LongHash][j];	// Index of sequence which "holds" this kmer
+									
+					// Avoid redundant comparisons by only looking at sequences that are after the current sequence A
+					// I.e. we've already processed any sequences before us in the 'sequences' array
+					if (holder > Ai){
+						if (Positions.count(holder) > 0) {
+							Positions[holder]++;
+							added++;
+						} else {
+							Positions[holder] = 1;
+							added++;
+						}
+					}
 
-					if (Positions.count(holder) > 0) {
-			Positions[holder]++;
-			added++;
-		} else {
-			Positions[holder] = 1;
-			added++;
-		}
-				}
-
-				if (added > 100000) {
-					hitPosLimit = true;
-					NumberPos = added;
-					break;
+					if (added > 100000) {
+						hitPosLimit = true;
+						NumberPos = added;
+						break;
+					}
 				}
 			}
 		}
 	}
 
 	if (FullOut) {
-		cout << "done Hashing read" << endl;
+		#pragma omp critical(progressOut) 
+		{ 
+			cout << "done Hashing read" << endl;
+		}
 	}
 
+	// Sort our postions by the number of times a kmer was found in the sequence at that position
+	// i.e. the highest value of the Positions map to the lowest value
 	NumberPos = added;
 	map<int, int>::iterator uspos;
 	multimap<int, int> SortedPositions;
 
-        for (uspos = Positions.begin(); uspos != Positions.end(); ++uspos) {
-                if (uspos->second > ACT)
-                {
-                        SortedPositions.insert(std::make_pair(uspos->second,uspos->first));
-                }
-        }
+	for (uspos = Positions.begin(); uspos != Positions.end(); ++uspos) {
+			if (uspos->second > ACT)
+			{
+				SortedPositions.insert(std::make_pair(uspos->second,uspos->first));
+			}
+	}
 
 
 	if (FullOut) {
-		cout << "found - " << Positions.size() << " possible locations" << endl;
+		#pragma omp critical(progressOut) 
+		{ 
+			cout << "found - " << Positions.size() << " possible locations" << endl;
+		}
 	}
 
 	map<double, int>::iterator pos;
 	vector<int> indexes;
 	int sanity = 0;
-	
 
+	// Check to make sure that we are meeting our minimum alignment count threshold (ACT)
 	for (auto pos = SortedPositions.rbegin() ; pos !=  SortedPositions.rend(); pos++)
-        {
+    {
 		if (pos->first >= ACT) {
-                	indexes.push_back(pos->second + 0);
+            indexes.push_back(pos->second + 0);
 			sanity++;
 
-                        if (sanity > 1000) {
-                                hitIndexLimit = true;
-                                NumberIndex = sanity;
-                                break;
-                        }
-                }
-
+			if (sanity > 1000) {
+					hitIndexLimit = true;
+					NumberIndex = sanity;
+					break;
+			}
         }
 
+    }
+
 	NumberIndex = sanity;
-	#pragma omp critical (array)
-	{ array[Ai] = indexes; }
+	#pragma omp critical (array) 
+	{ 
+		array[Ai] = indexes; 
+	}
 
 	if (FullOut) {
-		cout << "			 " << indexes.size() << " locations passed filter" << endl;
+		#pragma omp critical(progressOut) 
+		{ 
+			cout << "			 " << indexes.size() << " locations passed filter" << endl;
+		}
 	}
 	return 1;
 }
 
-int Align3(vector<string>& sequenes, string Ap, string Aq, int Ai, int& overlap,int& BestIndex, float minPercent, bool& PerfectMatch, int MinOverlap,vector<int>& indexes, int Threads, int NumReads) 
+int Align3(vector<string>& sequenes, string Ap, string Aq, int Ai, int& overlap, int& BestIndex, float minPercent, bool& PerfectMatch, int MinOverlap,vector<int>& indexes, int Threads, int NumReads) 
 {
 	int QualityOffset = 33;
 	bool verbose = false;
 	int Alength = Ap.size();
 	int bestScore = 0;
 
-	#pragma omp parallel for num_threads(Threads) shared(BestIndex)
-	for (int booya = 0; booya < indexes.size(); booya++) 
+	#pragma omp parallel for num_threads(Threads) shared(BestIndex, overlap, bestScore, PerfectMatch, sequenes)
+	for (int i = 0; i < indexes.size(); i++) 
 	{
-		string A; 
-		int AlengthL; 
-		int j; 
-		//pragma omp critical (A)
-		{
-			A = Ap;
-			AlengthL = A.size();
-			j = indexes[booya];
-		}
-		string B;
-		bool localcheck;
-		//pragma omp critical (sequenes)
-		{B = sequenes[j];}
+		string A = Ap; 
+		int AlengthL = A.size(); 
+		int j = indexes[i]; 
+		
+		string B = sequenes[j];
 		float score = 0;
 		int Blength = B.size();
-		int k;
+
 		int window = -1;
 		int longest = -1;
 		bool Asmaller = true;
+		bool LocalPerfectMatch = false;
 
 		if (Blength > AlengthL) 
 		{
@@ -214,6 +257,7 @@ int Align3(vector<string>& sequenes, string Ap, string Aq, int Ai, int& overlap,
 		int Loverlap = 0;
 		int Acount = 0;
 		int Bcount = 0;
+		int k;
 
 		for (int i = 0; i <= longest - window; i++) 
 		{
@@ -260,14 +304,15 @@ int Align3(vector<string>& sequenes, string Ap, string Aq, int Ai, int& overlap,
 
 					if (score == window) 
 					{
-						PerfectMatch = true;
+						LocalPerfectMatch = true;
 						break;
 					}
 				}
 			}
 		}
 
-		if (PerfectMatch == false) 
+		// If we haven't found a perfect match, continue searching for overlaps
+		if (LocalPerfectMatch == false) 
 		{
 			for (int i = window - 1; i >= MinOverlap; i--) 
 			{
@@ -333,7 +378,7 @@ int Align3(vector<string>& sequenes, string Ap, string Aq, int Ai, int& overlap,
 
 				float percent = score / (k);
 
-				if (percent > minPercent) 
+				if (percent >= minPercent) 
 				{
 					if (LbestScore < score) 
 					{
@@ -349,16 +394,35 @@ int Align3(vector<string>& sequenes, string Ap, string Aq, int Ai, int& overlap,
 		}
 		#pragma omp critical (best)
 		{
-			if (LbestScore > bestScore) {
-				bestScore = LbestScore;
-				BestIndex = LBestIndex;
-				overlap = Loverlap;
+			if (LbestScore > bestScore ||
+        		(LbestScore == bestScore && LBestIndex < BestIndex) ||
+        		(LbestScore == bestScore && LBestIndex == BestIndex && Loverlap < overlap)) {
+					bestScore = LbestScore;
+					BestIndex = LBestIndex;
+					overlap = Loverlap;
+			}
+			// Only want to update this logic if we have found a perfect match
+			if (LocalPerfectMatch) {
+				PerfectMatch = true;
 			}
 		}
 	}
 	return bestScore;
 }
 
+/* Combines sequences A and B into a single contiguous string. 
+ * k is the offset between A and B, where positive k means A is upstream of B.
+ * Aq, Bq, Ad, Bd, As, Bs are the quality strings, depth strings, and strand strings for A and B respectively.
+ * Returns the combined string.
+ * 
+ * Merges sequences based on the following logic:
+ * 1. If both sequences have the same base at a position → use that base, take the higher quality score, 
+ * and sum the depths (capped at 250)
+ * 2. If only one sequence has a base at that position → use that sequence's data
+ * 3. If sequences disagree → prefer the base with higher depth, or if depths are equal, prefer the one with higher quality
+ * 
+ * Updates the reference parameters (Bq, Bd, Bs) with the merged quality scores, depth data, and combined sequence information
+ */
 string ColapsContigs(string A, string B, int k, string Aq, string& Bq,string Ad, string& Bd, string As, string& Bs) {
 	bool verbose = false;
 	if (verbose) {cout << "Combining; \n" << A << endl << B << endl;}
@@ -505,8 +569,10 @@ string TrimNends(string S, string& qual) {
 	
 	qual = NewQ;
 	return NewS;
-}
+} 
 
+// The reason this is done is because if a couple of contigs have a gap in them (because of illumina problem not haplotype)
+// we won't collapse them on the first round without trimming these ends
 string TrimLowCoverageEnds(string S, string& quals, string& depth, int cutoff) {
 	bool base = false;
 	string NewS = "";
@@ -564,10 +630,7 @@ string AdjustBases(string sequence, string qual) {
 			NewString += sequence.c_str()[i];
 		}
 	}
-	
-	if (NewString != sequence) {
-		return NewString; 
-	}
+	return NewString; 
 }
 
 bool replace(std::string& str, const std::string& from, const std::string& to) {
@@ -593,7 +656,7 @@ string FlipStrands(string strand) {
 	}
 	return NewStrand;
 }
-void compresStrand(string S, int& F, int& R) {
+void compressStrand(string S, int& F, int& R) {
 	for (int i = 0; i < S.size(); i++) {
 		if (S.c_str()[i] == '+')
 			F++;
@@ -603,104 +666,100 @@ void compresStrand(string S, int& F, int& R) {
 	return;
 }
 
+bool parse_args(int argc, char* argv[], OverlapArgs& args) {
+
+	// todo: test if this is correct number logic
+	if (argc < 10) {
+		cout << argc << " arguments provided, but at least 10 are required.\n";
+		for (int i = 0; i < argc; i++) {
+			cout << "Arg " << i << ": " << argv[i] << endl;
+		}
+		cout << "Usage: " << argv[0] << " <fastq_file> <MinPercent> <MinOverlap> "
+						"<MinCoverage> <ReportStub> <hashLengthSize> <ACT> <OutFile> "
+						"<LCendTrimLength> <Threads> [--verbose]\n";
+		return false;
+	}
+
+	args.FastqIn = argv[1];
+	args.MinPercent = stof(argv[2]);
+	args.MinOverlap = strtol(argv[3], nullptr, 0);
+	args.MinCoverage = strtol(argv[4], nullptr, 0);
+	args.NameStub = argv[5];
+	args.hashLength = strtol(argv[6], nullptr, 0);
+	args.ACT = strtol(argv[7], nullptr, 0);
+	args.OverlapStub = argv[8];
+	args.TrimLCcuttoff = strtol(argv[9], nullptr, 0);
+	args.Threads = strtol(argv[10], nullptr, 0);
+
+	cout << "There were at least 10 args" << endl;
+	return true;
+}
+
 int main(int argc, char* argv[]) {
-	int SearchHash = 30;
-	int ACT = 0;
-	float MinPercent;
-	int MinOverlap;
-	int MinCoverage;
-	cout << "you gave " << argc << " Arguments" << endl;
 
-	if (argc != 11) {
-		cout << "ERROR, wrong numbe of arguemnts\nCall is: FASTQ, MinPercent, "
-						"MinOverlap, MinCoverage, ReportStub, SearchHashSize, ACT, OutFile "
-						"LCendTrimEpth Threads"
-				 << endl;
-		return 0;
+	OverlapArgs args;
+	if (!parse_args(argc, argv, args)) {
+		cout << "Error overlap parsing arguments. Please check the usage." << endl;
+		return 1; // Error in argument parsing
 	}
+	long int Buffer = 100;
+	// long int Buffer = 100 * args.Threads; - THIS LEADS TO NON-DETERMINISM
 
+	// Check & open file streams
 	ifstream fastq;
-	fastq.open(argv[1]);
-
-	if (fastq.is_open()) {
-		cout << "Parent File open - " << argv[1] << endl;
-	}	// cout << "##File Opend\n";
-	else {
-		cout << "Error, ParentHashFile could not be opened";
-		return 0;
+	fastq.open(args.FastqIn.c_str());
+	if (!fastq.is_open()) {
+		cout << "Error, Fastq file could not be opened - " << args.FastqIn << endl;
+		return -1;
 	}
 
-	//TODO: Factor out temps and cast to string
-	string temp = argv[2];
-	MinPercent = atof(temp.c_str());
-	temp = argv[3];
-	MinOverlap = atoi(temp.c_str());
-	temp = argv[4];
-	MinCoverage = atoi(temp.c_str());
-	temp = argv[6];
-	SearchHash = atoi(temp.c_str());
-	temp = argv[7];
-	ACT = atoi(temp.c_str());
-	temp = argv[9];
-	int TrimLCcuttoff = atoi(temp.c_str());
-	temp = argv[10];
-	int Threads = atoi(temp.c_str());
-	int Buffer = 100 * Threads;
 	ofstream report;
 	std::stringstream ss;
-	string FirstPassFile = argv[1];
-	ss << argv[8] << ".fastq";
+	string FirstPassFile = args.FastqIn;
+	ss << args.OverlapStub << ".fastq";
 	FirstPassFile = ss.str();
 	report.open(FirstPassFile.c_str());
-
-	if (report.is_open()) {
-	} else {
-		cout << "ERROR, Mut-Output file could not be opened - " << FirstPassFile
+	if (!report.is_open()) {
+		cout << "Error, Mut-Output file could not be opened - " << FirstPassFile
 				 << endl;
-		return 0;
+		return -1;
 	}
 
-	ofstream Depreport;
+	ofstream DepReport;
 	FirstPassFile += "d";
-	Depreport.open(FirstPassFile.c_str());
-	if (report.is_open()) {
-	} else {
-		cout << "ERROR, Mut-Output file could not be opened - " << FirstPassFile
+    DepReport.open(FirstPassFile.c_str());
+	if (!report.is_open()) {
+		cout << "Error, Mut-Output depth file could not be opened - " << FirstPassFile
 				 << endl;
-		return 0;
+		return -1;
 	}
 
 	ofstream good;
 	FirstPassFile = ss.str();
 	FirstPassFile += "good.fastq";
 	good.open(FirstPassFile.c_str());
-
-	if (good.is_open()) {
-	} else {
-		cout << "ERROR, Mut-Output file could not be opened - " << FirstPassFile
+	if (!good.is_open()) {
+		cout << "Error, Mut-Output good file could not be opened - " << FirstPassFile
 				 << endl;
-		return 0;
+		return -1;
 	}
 
 	ofstream bad;
 	FirstPassFile = ss.str();
 	FirstPassFile += "bad.fastq";
 	bad.open(FirstPassFile.c_str());
-
-	if (bad.is_open()) {
-	} else {
-		cout << "ERROR, Mut-Output file could not be opened - " << FirstPassFile
+	if (!bad.is_open()) {
+		cout << "Error, Mut-Output bad file could not be opened - " << FirstPassFile
 				 << endl;
 		return 0;
 	}
 
 	string line;
-	vector<string> sequenes;	// = new vector<string>;
-	vector<string> qual;			//= new vector<string>;
-	vector<string> depth;		 // = new vector<string>;
-	vector<string> strand;
-	std::unordered_map<unsigned long, vector<int>> Hashes;
-	std::unordered_map<unsigned long, int> Hashesize; 
+	vector<string> sequenes;	// The array of full-length sequences extracted from the input fastq file
+	vector<string> qual;		// An array of the per-nucleotide qualities corresponding to the sequences
+	vector<string> depth;		// An array of the per-nucleotide kmer-depths corresponding to the sequences
+	vector<string> strand;		// An array of the strands each sequence is located on
+	std::unordered_map<unsigned long, vector<int>> Hashes;	// The hash table of kmer hashes to indices of sequences containing that kmer
 	int lines = -1;
 	int goodlines = 0;
 	int dup = 0;
@@ -711,9 +770,11 @@ int main(int argc, char* argv[]) {
 	string L5;
 	string L6;
 	int Rejects = 0;
-	string Fastqd = argv[1];
+	string Fastqd = args.FastqIn;
 	size_t found = Fastqd.find(".fastqd");
 
+	// Read in entire fastq file, 6 lines at a time
+	// If we're reading in a fastq+depth file, we simply trim off the low coverage ends before starting to process the reads
 	if (found != string::npos) {
 		int counter = 0;
 		cout << "ATTENTION - Fastq+depth input detected, reading in FASTQD file \n";
@@ -743,12 +804,11 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			//Multiple = false;
 			if (Multiple == true) {
-				L2 = TrimLowCoverageEnds(L2, L4, depths, TrimLCcuttoff);
+				L2 = TrimLowCoverageEnds(L2, L4, depths, args.TrimLCcuttoff);
 			}
 
-			if (L2.size() > SearchHash + 1) {
+			if (L2.size() > args.hashLength + 1) {
 				lines++;
 				sequenes.push_back(L2);
 				qual.push_back(L4);
@@ -760,6 +820,8 @@ int main(int argc, char* argv[]) {
 				bad << L1 << endl << L2 << endl << L3 << endl << L4 << endl;
 			}
 		}
+	// If we have a fastq file, we (should be) checking for duplicates, trimming Ns, and adjustung
+	//  bases based on quality values before processing reads
 	} else {
 		vector<string> DupCheck;
 		cout << "Reading in raw fastq \n";
@@ -789,33 +851,37 @@ int main(int argc, char* argv[]) {
 			bool found = false;
 			bool RunDupCheck = true;
 
-			if (RunDupCheck) {
+			// if (RunDupCheck) {
 
-#pragma omp parallel for num_threads(Threads) shared(DupCheck, L2, found)
-				for (int i = 0; i < DupCheck.size(); i++) {
-					if (L2.size() == DupCheck[i].size()) {
-						bool AllBasesMatch = true;
+			// 	// BUG FIX NEEDED
+			// 	// NOTE: this is currently NEVER run because nothing added to DupCheck until we've already run the loop
+			// 	#pragma omp parallel for num_threads(args.Threads) shared(DupCheck, L2, found)
+			// 	for (int i = 0; i < DupCheck.size(); i++) {
+			// 		if (L2.size() == DupCheck[i].size()) {
+			// 			bool AllBasesMatch = true;
 
-						for (int k = 0; k < L2.size(); k++) {
-							if (L2.c_str()[k] == 'N' or DupCheck[i].c_str()[k] == 'N') {
-							} else if (L2.c_str()[k] == DupCheck[i].c_str()[k]) {
-							} else {
-								AllBasesMatch = false;
-								break;
-							}
-						}
+			// 			for (int k = 0; k < L2.size(); k++) {
+			// 				if (L2.c_str()[k] == 'N' or DupCheck[i].c_str()[k] == 'N') {
+			// 				} else if (L2.c_str()[k] == DupCheck[i].c_str()[k]) {
+			// 				} else {
+			// 					AllBasesMatch = false;
+			// 					break;
+			// 				}
+			// 			}
 
-						if (AllBasesMatch) {
-							#pragma omp critical (found)
-							{ found = true; }
-						}
-					}
-				}
+			// 			if (AllBasesMatch) {
+			// 				#pragma omp critical (found) 
+			// 				{ 
+			// 					found = true; 
+			// 				}
+			// 			}
+			// 		}
+			// 	}
 
-				if ((double)Ns / (double)L2.size() < 0.20) {
-					DupCheck.push_back(L2);
-				}
-			}
+			// 	if ((double)Ns / (double)L2.size() < 0.20) {
+			// 		DupCheck.push_back(L2);
+			// 	}
+			// }
 
 			if (found == false) {
 				L2 = AdjustBases(L2, L4);
@@ -845,16 +911,20 @@ int main(int argc, char* argv[]) {
 		DupCheck.clear();
 	}
 
+
 	good.close();
 	bad.close();
 	cout << "done reading " << endl;
-	int NumReads = sequenes.size();
+	int NumReads = sequenes.size(); 
 	cout << "\nDone reading in \n		 Read in a total of " << lines
 			 << " and rejected " << Rejects << " with " << dup
 			 << " duplicate reads detected for a total of " << goodlines
 			 << "good reads" << endl;
 
-	RebuildHashTable(sequenes, 0, SearchHash, Hashes, Threads, Hashesize);
+
+	// First kmer table build after reading in all of the fastq/d reads
+	RebuildHashTable(sequenes, 0, args.hashLength, Hashes, args.Threads);
+
 	clock_t St, Et;
 	int FoundMatch = 0;
 	struct timeval start, end;
@@ -867,11 +937,13 @@ int main(int argc, char* argv[]) {
 	double AverageRPos = 0.0;
 	double AverageRSanity = 0.0;
 
+	// Outer loop iterating through every sequence in chunks of Buffer size
 	for (std::vector<string>::size_type b = 0; b < sequenes.size(); b += Buffer) {
 		LinesSinceLastBuild += Buffer;
 
-		if (LinesSinceLastBuild > 1000000) {
-			RebuildHashTable(sequenes, b, SearchHash, Hashes, Threads, Hashesize);
+		// Rebuild hash table every million lines
+		if (LinesSinceLastBuild > 1000000) { 
+			RebuildHashTable(sequenes, b, args.hashLength, Hashes, args.Threads);
 			LinesSinceLastBuild = 0;
 		}
 
@@ -879,7 +951,7 @@ int main(int argc, char* argv[]) {
 		vector<int> ToAddPos;
 		map<int, vector<int>> Forwards;
 		map<int, vector<int>> Revs;
-		int max = b + Buffer;
+		int max = b + Buffer; // todo: check off by one errors here
 
 		if (max > sequenes.size()) {
 			max = sequenes.size();
@@ -889,8 +961,8 @@ int main(int argc, char* argv[]) {
 			cout << "Bulding list to align" << endl;
 		}
 
-		
-#pragma omp parallel for num_threads(Threads) shared(Hashes, Forwards)
+		// For each sequence in chunk, prepare list of potential alignment matches by comparing kmers
+		#pragma omp parallel for num_threads(args.Threads) shared(Hashes, Forwards)
 		for (int i = b; i < max; i++) 
 		{
 			string A = sequenes[i];
@@ -898,7 +970,7 @@ int main(int argc, char* argv[]) {
 			bool sanityLimit = false;
 			int NumPos = 0;
 			int NumSanity = 0;
-			PrepairSearchList(A, i, Hashes, SearchHash, ACT, Forwards, posLimit,sanityLimit, NumPos, NumSanity, Hashesize);
+			PrepareSearchList(A, i, Hashes, args.hashLength, args.ACT, Forwards, posLimit, sanityLimit, NumPos, NumSanity);
 			if (posLimit) {
 				NumberHitPosLimit++;
 			}
@@ -909,7 +981,7 @@ int main(int argc, char* argv[]) {
 			AverageFSanity = ((AverageFSanity * (double)b) + (double)NumSanity) /((double)b + 1.0);
 		}
 
-#pragma omp parallel for num_threads(Threads) shared(Hashes, Revs)
+		#pragma omp parallel for num_threads(args.Threads) shared(Hashes, Revs)
 		for (int i = b; i < max; i++) 
 		{
 			string A = Util::RevComp(sequenes[i]);
@@ -917,7 +989,7 @@ int main(int argc, char* argv[]) {
 			bool sanityLimit = false;
 			int NumPos = 0;
 			int NumSanity = 0;
-			PrepairSearchList(A, i, Hashes, SearchHash, ACT, Revs, posLimit,sanityLimit, NumPos, NumSanity, Hashesize);
+			PrepareSearchList(A, i, Hashes, args.hashLength, args.ACT, Revs, posLimit,sanityLimit, NumPos, NumSanity);
 			if (posLimit) {
 				NumberHitPosLimit++;
 			}
@@ -932,6 +1004,7 @@ int main(int argc, char* argv[]) {
 			cout << "Done Bulding List" << endl;
 		}
 
+		// Serially iterate through this chunk of sequences
 		for (int i = b; i < max; i++) {
 			string A, Aqual, Adep, Astr;
 			A = sequenes[i];
@@ -964,13 +1037,15 @@ int main(int argc, char* argv[]) {
 						 << " AvI= " << (AverageRSanity + AverageFSanity) / 2.0 << "\r";
 			}
 
-			int booya =Align3(sequenes, A, Aqual, i, k, bestIndex, MinPercent, PerfectMatch, MinOverlap, Forwards[i], Threads, NumReads);
+			// Align the current sequence with the possible options in Forwards
+			int bestScore = Align3(sequenes, A, Aqual, i, k, bestIndex, args.MinPercent, PerfectMatch, args.MinOverlap, Forwards[i], args.Threads, NumReads);
 
 			if (FullOut) {
-				cout << "best forward score is " << booya << " k is " << k
+				cout << "best forward score is " << bestScore << " k is " << k
 						 << " index = " << bestIndex << endl;
 			}
 
+			// If we don't have a perfect match, align the current sequence with the possible options in Revs
 			if (!(PerfectMatch)) {
 				string revA = Util::RevComp(A);
 				string revAqual = Util::RevQual(Aqual);
@@ -983,19 +1058,21 @@ int main(int argc, char* argv[]) {
 					cout << "Checking Reverse\n";
 				}
 
-				int revbooya =	Align3(sequenes, revA, revAqual, i, revk, revbestIndex, MinPercent, PerfectMatch, MinOverlap, Revs[i], Threads, NumReads);
+				int revBestScore =	Align3(sequenes, revA, revAqual, i, revk, revbestIndex, args.MinPercent, PerfectMatch, args.MinOverlap, Revs[i], args.Threads, NumReads);
+				
 				if (FullOut) {
-					cout << "best reverse score is " << revbooya << " k is " << revk
+					cout << "best reverse score is " << revBestScore << " k is " << revk
 							 << " index = " << revbestIndex << endl;
 				}
 
-				if (revbooya > booya) {
+				// TODO: here is one part where we need to keep revBestScore AND bestScore if they have equal alignment scores
+				if (revBestScore > bestScore) {
 					A = revA;
 					Aqual = revAqual;
 					Adep = revAdep;
 					Astr = revAstr;
 					k = revk;
-					booya = revbooya;
+					bestScore = revBestScore;
 					bestIndex = revbestIndex;
 				}
 			} else {
@@ -1004,7 +1081,8 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			if (booya < MinOverlap) {
+			// Check that we meet our minimum overlap requirement
+			if (bestScore < args.MinOverlap) {
 				if (FullOut) {
 					cout << "No good match found, skipping" << endl;
 				}
@@ -1021,8 +1099,8 @@ int main(int argc, char* argv[]) {
 						cout << "found match at " << k << endl;
 
 						for (int z = 0; z < k; z++) {
-				cout << "+";
-			}
+							cout << "+";
+						}
 
 						cout << A << endl << B << endl;
 
@@ -1038,12 +1116,12 @@ int main(int argc, char* argv[]) {
 						cout << A << endl;
 
 						for (int z = 0; z < abs(k); z++) {
-				cout << "-";
-			}
+							cout << "-";
+						}
 						cout << B << endl;
 						for (int z = 0; z < abs(k); z++) {
-				cout << "-"; 
-			}
+							cout << "-"; 
+						}
 						for (int z = 0; z < Bdep.size(); z++) {
 							int bam = Bdep.c_str()[z];
 							cout << bam;
@@ -1053,14 +1131,10 @@ int main(int argc, char* argv[]) {
 					}
 				}
 
-				string combined =
-		ColapsContigs(A, B, k, Aqual, Bqual, Adep, Bdep, Astr, Bstr);
-
+				// Collapse the sequences for the best match - again TODO: will need to make this work for multiple equal matches
+				string combined = ColapsContigs(A, B, k, Aqual, Bqual, Adep, Bdep, Astr, Bstr);
 				if (Bqual.size() != combined.size()) {
-					cout << "ERRRORRR "
-									"^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
-									"^^^^"
-							 << endl;
+					cerr << "Error: something went wrong combining sequences into contigs" << endl;
 				}
 
 				qual[bestIndex] = Bqual;
@@ -1069,47 +1143,47 @@ int main(int argc, char* argv[]) {
 				strand[bestIndex] = Bstr;
 				sequenes[i] = "moved";
 
-#pragma omp parallel for num_threads(Threads) shared(Hashes)
-				for (int j = 0; j < A.size() - SearchHash; j++) {
-					string hash = A.substr(j, SearchHash);
-					size_t found = hash.find('N');
-
-					if (found == std::string::npos) {
-						bool found = false;
-						int k = 0;
-
-						for (k = 0; k < Hashes[Util::HashToLong(hash)].size(); k++) {
-							if (Hashes[Util::HashToLong(hash)][k] == bestIndex) {
-								found = true;
-								break;
-							}
-						}
-
-						if (found = false) {
-							#pragma omp critical (Hashes)
-							{
-								Hashes[Util::HashToLong(hash)].push_back(bestIndex);
-							}
-						}
-						found = false;
-
-						for (k = 0;
-								 k < Hashes[Util::HashToLong(Util::RevComp(hash))].size();
-								 k++) {
-							if (Hashes[Util::HashToLong(Util::RevComp(hash))][k] ==	bestIndex) {
-								found = true;
-								break;
-							}
-						}
-
-						if (found = false) {
-							#pragma omp critical (Hashes)
-							{
-								Hashes[Util::HashToLong(Util::RevComp(hash))].push_back(bestIndex);
-							}
-						}
-					}
-				}
+				// Update hash table Hashes with updated collapsed info
+				// We might have new hashes here from combined sequence
+				// #pragma omp parallel for num_threads(1) shared(Hashes)
+				// for (int j = 0; j < combined.size() - args.hashLength; j++) {
+				// 	string hash = combined.substr(j, args.hashLength);
+				// 	size_t foundIdx = hash.find('N');
+				// TODO: change this back, this was correct logic
+					
+				// 	if (foundIdx == std::string::npos) {
+				// 		unsigned long forwardHash = Util::HashToLong(hash);
+				// 		unsigned long reverseHash = Util::HashToLong(Util::RevComp(hash));
+						
+				// 		#pragma omp critical(updateHash) 
+				// 		{	
+				// 			bool foundForwardMatch = false;
+				// 			vector<int>& forwardList = Hashes[forwardHash];
+				// 			for (int k = 0; k < forwardList.size(); k++) {
+				// 				if (forwardList[k] == bestIndex) {
+				// 					foundForwardMatch = true;
+				// 					break;
+				// 				}
+				// 			}
+				// 			if (!foundForwardMatch) {
+				// 				Hashes[forwardHash].push_back(bestIndex);
+				// 			}
+							
+							
+				// 			bool foundReverseMatch = false;
+				// 			vector<int>& reverseList = Hashes[reverseHash];
+				// 			for (int k = 0; k < reverseList.size(); k++) {
+				// 				if (reverseList[k] == bestIndex) {
+				// 					foundReverseMatch = true;
+				// 					break;
+				// 				}
+				// 			}
+				// 			if (!foundReverseMatch) {
+				// 				Hashes[reverseHash].push_back(bestIndex);
+				// 			}
+				// 		}
+				// 	}
+				// }
 
 				if (FullOut) {
 					cout << combined << endl;
@@ -1129,6 +1203,9 @@ int main(int argc, char* argv[]) {
 	cout << "\nRESULTS\n";
 	int count = 0;
 
+	// Iterate through each sequence from fastq in order of receipt
+	// If the sequence is not "moved" and has sufficient length and coverage, write it to the report files
+	// I don't think the index here should change between runs, since the sequences array is serially populated
 	for (int i = 0; i < sequenes.size(); i++) {
 
 		if (sequenes[i] != "moved" && sequenes[i].size() >= 95) {
@@ -1142,37 +1219,36 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			if (maxDep >= MinCoverage) {
+			if (maxDep >= args.MinCoverage) {
 				count++;
 			 	int F = 0;
 				int R = 0;
-				compresStrand(strand[i], F, R); 
-	//report << "@NODE_" << i << "_L=" << sequenes[i].size()			 << "_D=" << maxDep << endl;
-	report << "@NODE_" << argv[6] << "_" << i << "_L" << sequenes[i].size()<< "_D" << maxDep << ":" << F << ":" << R << ":" << endl;
+				compressStrand(strand[i], F, R);
+				report << "@NODE_" << args.hashLength << "_" << i << "_L" << sequenes[i].size()<< "_D" << maxDep << ":" << F << ":" << R << ":" << endl;
 				report << sequenes[i] << endl;
 				report << "+" << endl;
 				report << qual[i] << endl;
 
-				Depreport << "@NODE_" << argv[6] << "_" << i << "_L" << sequenes[i].size()<< "_D" << maxDep << ":" << F << ":" << R << ":" << endl;
-				Depreport << sequenes[i] << endl;
-				Depreport << "+" << endl;
-				Depreport << qual[i] << endl;
-				Depreport << strand[i] << endl;
+				DepReport << "@NODE_" << args.hashLength << "_" << i << "_L" << sequenes[i].size()<< "_D" << maxDep << ":" << F << ":" << R << ":" << endl;
+				DepReport << sequenes[i] << endl;
+				DepReport << "+" << endl;
+				DepReport << qual[i] << endl;
+				DepReport << strand[i] << endl;
 				unsigned char C = depth[i].c_str()[0];
-				int booya = C;
-				Depreport << booya;
+				int bestScore = C;
+				DepReport << bestScore;
 
 				for (int w = 1; w < depth[i].size(); w++) {
 					C = depth[i].c_str()[w];
-					booya = C;
-					Depreport << ' ' << booya;
+					bestScore = C;
+					DepReport << ' ' << bestScore;
 				}
 
-				Depreport << endl;
+				DepReport << endl;
 			}
 		}
 	}
 	cout << "Wrote " << count << " sequences" << endl;
 	report.close();
-	Depreport.close();
+	DepReport.close();
 }

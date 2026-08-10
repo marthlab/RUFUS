@@ -1,6 +1,6 @@
 /*By ANDREW FARRELL
  * RUFUS.CheckHashFilter.cpp
- * TODO: describe funciton of file
+ * TODO: describe function of file
  */
 
 #include <bitset>
@@ -34,7 +34,7 @@ int main(int argc, char *argv[])
 
 	int BufferSize = 240;
 
-	cout << "Paramaters are:\n	PreBuiltMutHash = " << argv[1]
+	cout << "Parameters are:\n	PreBuiltMutHash = " << argv[1]
 			 << "\n	Mutant.mate1.fq = " << argv[2]
 			 << "\n	Mutant.mate2.fq = " << argv[3] 
 			 << "\n	out stub = " << argv[4]
@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
 	// Read in file passed to the program on the command line
 
 	string temp = argv[5];
-	int HashSize = atoi(temp.c_str());
+	int HashSize = atoi(temp.c_str()); // k-mer length
 	temp = argv[6];
 	int MinQ = atoi(temp.c_str());
 	temp = argv[7];
@@ -56,7 +56,7 @@ int main(int argc, char *argv[])
 	MutHashFile.open(argv[1]);
 	if (MutHashFile.is_open()) {
 		cout << "Parent File open - " << argv[1] << endl;
-	}	// cout << "##File Opend\n";
+	}
 	else {
 		cout << "Error, ParentHashFile could not be opened";
 		return 0;
@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
 	cout << "here " << endl;	
  
 	if (MutFileM1.is_open()) {
-		cout << "##File Opend\n";
+		cout << "##File Opened\n";
 	} else {
 		cout << "Error, MutFile could not be opened";
 		return 0;
@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
 	MutFileM2.open(argv[3]);
 	
 	if (MutFileM2.is_open()) {
-		cout << "##File Opend\n";
+		cout << "##File Opened\n";
 	} else {
 		cout << "Error, MutFile could not be opened";
 		return 0; 
@@ -110,7 +110,7 @@ int main(int argc, char *argv[])
 
 	string line;
 	unordered_map<unsigned long, int> Mutations;
-	cout << "Reading in pre-built hash talbe\n";
+	cout << "Reading in pre-built hash table\n";
 	int lines = 0;
 	string L1;
 	unsigned long LongHash;
@@ -118,6 +118,8 @@ int main(int argc, char *argv[])
 	cout << "starting " << endl;
 	cout << "	Reading in MutHashFile" << endl;
 
+	// Iterate through hash list and add to Mutations hash table
+	// Adds both forward and reverse version of kMer
 	while (getline(MutHashFile, L1)) {
 		vector<string> temp;
 		temp = Util::Split(L1, ' ');
@@ -156,11 +158,12 @@ int main(int argc, char *argv[])
 	St = clock();
 	int found = 0;
 	lines = 0;
-	string BufferMate1[2400];
+	string BufferMate1[2400]; // TODO: why doesn't this match buffer size?
 	string BufferMate2[2400];
 
 	while (getline(MutFileM1, L1)) 
 	{
+		// Put first four lines from each file in array
 		lines++;
 		BufferMate1[0] = L1;
 		getline(MutFileM1, BufferMate1[1]);
@@ -174,16 +177,18 @@ int main(int argc, char *argv[])
 
 
 
-
+        // todo: figure out what's going on here
 		if (lines % 10000 > 1 && (lines % (10000 + Threads) < Threads)) {
 			Et = clock();
 			float Dt = ((double)(Et - St)) * CLOCKS_PER_SEC;
+            // todo: there's a race condition somewhere on this output (in o.out)
 			cout << "Read in " << lines * (BufferSize/4) << " lines: Found " << found
 					 << " Reads per sec = " << (float)lines / (float)Dt << " \r";
 		}
 
 		int pos = 4;
 
+		// Put next lines in array until 10% of fastqs processed
 		while (getline(MutFileM1, BufferMate1[pos])) 
 		{
 			getline(MutFileM2, BufferMate2[pos]);
@@ -193,6 +198,9 @@ int main(int argc, char *argv[])
 			}
 		}
 
+		// I wonder if this could be faster if we keep track of where the kMers came from (lines in fastq)
+		// And then just pulled them out that way
+		// Would have to do the N/lowQ checks on the front end when we build the kMer table
 		#pragma omp parallel for shared(MutOutFileM1, MutOutFileM2) num_threads(Threads)
 		for (int BuffCount = 0; BuffCount < pos; BuffCount += 4) 
 		{
@@ -202,6 +210,7 @@ int main(int argc, char *argv[])
 
 			for (int i = start; i < BufferMate1[BuffCount + 1].length()-1 ; i++) 
 			{
+                // If quality is too low, or base is N
 			 	if (((int)BufferMate1[BuffCount + 3].c_str()[i] - 33) < MinQ || (int)BufferMate1[BuffCount + 1].c_str()[i] == 78) 
 				{
 					//cout << "found bad base in read " << BufferMate1[BuffCount + 0] << "at pos " << i << " base " << BufferMate1[BuffCount + 1].c_str()[i] << " qual = " << BufferMate1[BuffCount + 3].c_str()[i]  << " = " << (int)BufferMate1[BuffCount + 3].c_str()[i] - 33 << endl; 
@@ -211,14 +220,17 @@ int main(int argc, char *argv[])
 				else
 					streak++;
 
+				// HashSize is length of kMer (25)
 				if (streak >= HashSize ) 
 				{
-					if (Mutations.count(Util::HashToLong(	BufferMate1[BuffCount + 1].substr(i-HashSize+1, HashSize))) > 0) 
+					if (Mutations.count(Util::HashToLong(BufferMate1[BuffCount + 1].substr(i-HashSize+1, HashSize))) > 0) 
 					{
 						MutHashesFound++;
 					}
 				}
 			}
+			// HashCountThreshold default is 1
+			// So if a read matches a single kMer (where the matching section doesn't have Ns or bad quality bases)
 			if (MutHashesFound >= HashCountThreshold )
                         {
                                 #pragma omp critical(MutWrite)
@@ -242,6 +254,7 @@ int main(int argc, char *argv[])
 	
 				for (int i = startM2; i < BufferMate2[BuffCount + 1].length()-1 ; i++) 
 				{
+                    // If quality is too low, or base is N
 					if (((int)BufferMate2[BuffCount + 3].c_str()[i] - 33) < MinQ || (int)BufferMate2[BuffCount + 1].c_str()[i] == 78) 
 					{
 						//cout << "found bad base in read2 " << BufferMate2[BuffCount + 0] << "at pos " << i << " base " << BufferMate2[BuffCount + 1].c_str()[i] << " qual = " << BufferMate2[BuffCount + 3].c_str()[i]  << " = " << (int)BufferMate2[BuffCount + 3].c_str()[i] - 33 << endl;

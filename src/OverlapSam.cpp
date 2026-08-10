@@ -26,62 +26,70 @@
 #include "Util.h"
 
 using namespace std;
-unordered_map<unsigned long, int> Mutations;
+unordered_map<unsigned long, int> Mutations; // All unique kmers (F + R) that get filtered into sequences/unsequences
 int HashSize = -1; 
 bool FullOut = false;
 unordered_map<string, bool> DupCheck; 
+
+// Performs three overlaps and returns the score from the best one
+// First a complete overlap, then a partial at the 3' end of A and 5' end of B, then a partial at the 5' end of A and 3' end of B
+// Score is simply +1 for each base that matches and has a qual > 5 on both strands (and is not N)
 int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aqp, int Ai, int& overlap, int& index, float minPercentpassed, bool& PerfectMatch, int MinOverlapPassed, int Threads) 
 {
-	int QualityOffset = 33; //=64; 
+	int QualityOffset = 33;
 	int MinQual = 20;
 	bool verbose = false;
 	int bestScore = 0;
 	int NumReads = sequenes.size();
 	int start = Ai + 1;
-	int end = start + 10; 
+	int end = start + 10;
+
 	if (end > sequenes.size()) 
 	{
 		end = sequenes.size();
 	}
-	if (FullOut == true ) {cout << "staring alignemtn from " << start << " to " << end<< endl;} 
+	if (FullOut == true ) {cout << "staring alignment from " << start << " to " << end<< endl;} 
+
+	// Ap = sequence
+	// Aqp = quality of that sequence
+	// overlap = k argument 
+	// minPercentagePassed = MinPercent (fixed at 0.99)
+	// minOverlapPassed = MinOverlap (fixed at 25)
 	#pragma omp parallel for shared(Ap, Aqp, index, overlap, bestScore) num_threads(Threads)
 	for (int j = start; j < end; j++) 
 	{
-		int MinOverlap = MinOverlapPassed;
-		float minPercent = minPercentpassed;
+		int MinOverlap = MinOverlapPassed; // 25
+		float minPercent = minPercentpassed; // 0.99
 		int LocalBestScore = 0;
 		int LocalIndex = -1;
 		int LocalOverlap = 0;
+		bool LocalPerfectMatch = false;
 		string A;
 		int Alen;
 		string Aq;
-		//#pragma omp critical
-		{
-			A = Ap;
-			Alen = A.length();
-			Aq = Aqp;
-		}
+		A = Ap;
+		Alen = A.length();
+		Aq = Aqp;
+
 		string B;
 		string Bq;
 		int Blength = -1;
 		int Alength = Alen;
 		int k;
-
-		//#pragma omp critical
-		{
-			B = sequenes[j];
-			Bq = quals[j];
-		}
+		B = sequenes[j];
+		Bq = quals[j];
+		
 		Blength = B.length();
 		int window = -1;
 		int longest = -1;
 		bool Asmaller = true;
 
+		// Set window to the smaller of the sequence lengths
 		if (Blength > Alength) 
 		{
 			window = Alength;
 			longest = Blength;
-			Asmaller = false;
+			Asmaller = false; // This logic seems to be backwards - SJG
 		} 
 		else 
 		{
@@ -90,7 +98,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 			Asmaller = true;
 		}
 
-		int MM = window - (window * minPercent);
+		int MM = window - (window * minPercent); // Base pair length allowed to mismatch
 		int Acount = 0;
 		int Bcount = 0;
 
@@ -107,6 +115,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 						score++;
 					}
 				}
+				// Break out of loop if we've hit mismatch limit
 				if ((k - score) > MM) 
 				{
 					score = -1;
@@ -114,8 +123,8 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 				}
 			}
 
-			if (Asmaller) 
-			{
+			// Nothing is done with these variables - can get rid of
+			if (Asmaller) {
 				Acount++;
 			} else {
 				Bcount++;
@@ -126,14 +135,17 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 				cout << "	Score = " << score << endl;
 			}
 			
+			// Normalize score based on window size
 			float percent = score / (window);
 			if (percent >= minPercent) 
 			{
-				 if (FullOut == true ) {cout << percent << " = " << score << " / " << window << endl;}
+				if (FullOut == true ) {cout << percent << " = " << score << " / " << window << endl;}
 				if (LocalBestScore < score) 
 				{
 					LocalBestScore = score;
 					LocalIndex = j;
+
+					// TODO: unsure of what this means - SJG
 					if (Asmaller) 
 					{
 						LocalOverlap = i * -1;
@@ -141,15 +153,17 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 						LocalOverlap = i;
 					}
 				}
+				// Note: as soon as we find a perfect match we take the first one
+				// Could this affect STRs or long repeats? - SJG
 				if (score == window) {
-					PerfectMatch = true;
+					LocalPerfectMatch = true;
 					break;
 				}
 			}
 		}
-
-		if (PerfectMatch == false) 
+		if (LocalPerfectMatch == false) 
 		{
+			// Check for overlap at end of A and start of B
 			for (int i = window - 1; i >= MinOverlap; i--) 
 			{
 				if (verbose) {cout << "i = " << i << endl;}
@@ -191,6 +205,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 				}
 			}
 
+			// Check for overlap at end of B and start of A	
 			for (int i = window - 1; i >= MinOverlap; i--) 
 			{
 				if (verbose) {	cout << "i = " << i << endl;}
@@ -214,7 +229,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 				float percent = score / (k);
 				if (percent >= minPercent) 
 				{
-					 if (FullOut == true ) {cout << "percentthird = " << percent << " = " << score << " / " << k << endl;}
+					if (FullOut == true ) {cout << "percentthird = " << percent << " = " << score << " / " << k << endl;}
 					if (LocalBestScore < score) 
 					{
 						LocalBestScore = score;
@@ -230,16 +245,26 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap, string Aq
 		}
 		#pragma omp critical(updateCounts)
 		{
-			if (bestScore < LocalBestScore) {
+		if (bestScore < LocalBestScore || 
+        	(bestScore == LocalBestScore && LocalIndex < index)) {  // Tie-breaker to ensure consistent results		
 				bestScore = LocalBestScore;
 				index = LocalIndex;
 				overlap = LocalOverlap;
+			}
+			// Only want to update this logic if we have found a perfect match
+			if (LocalPerfectMatch) {
+				PerfectMatch = true;
 			}
 		}
 	}
 	return bestScore;
 }
 
+// Collapses reads A and B into a single string
+// Takes the best base (i.e. the only base if only one is present) and not an N if possible
+// Takes the higher of the two quality scores associated with the non-Z and non-N base
+// Combines the depth for the reads to a maximum of 250
+// Returns the new combined base string, and updates pointers for quality, depth, and coverage
 string ColapsContigs(string A, string B, int k, string Aq, string& Bq,
 										 string& Ad, string& Bd, string& As, string& Bs) {
 	bool verbose = false;
@@ -310,6 +335,7 @@ string ColapsContigs(string A, string B, int k, string Aq, string& Bq,
 				newQual += Bqual;
 			}
 
+			// TODO: where is this depth value used in the future and is 250 a good hard number?
 			if ((int)Adep + (int)Bdep < 250) {
 				newDepth += (Adep + Bdep);
 			} else {
@@ -356,6 +382,7 @@ string ColapsContigs(string A, string B, int k, string Aq, string& Bq,
 	return newString;
 }
 
+// Trims Ns off the ends of the read
 string TrimNends(string S, string& qual) {
 	bool base = false;
 	string NewS = "";
@@ -531,6 +558,8 @@ void compresStrand(string S, int& F, int& R) {
 	}
 	return;
 }
+// Takes in sequence, creates kmers, and filters for only those without Ns in them
+// Asks how many of the filtered kmers occur in the mutation hash, and returns that number
 int CountHashes(string seq)
 {
 	int count=0; 
@@ -587,7 +616,7 @@ int main(int argc, char* argv[]) {
 				 << "\n FileStub = " << argv[5] 
 				 << "\n NodeStub = " << argv[6] 
 				 << "\n MinCovTrimCov = " << argv[7] 
-				 << "\n HashPath = " << argv[8]
+				 << "\n HashPath = " << argv[8] // This is .HashList (e.g. seq count)
 				 << "\n Threads = " << argv[9]
 				 << endl;	
 	
@@ -614,6 +643,9 @@ int main(int argc, char* argv[]) {
 	ofstream report;
 	string FirstPassFile = argv[1];
 	std::stringstream ss;
+
+	// Output file for sequences that successfully overlap
+	// TempOverlap/{namestub}.sam
 	ss << argv[5] << ".fastq";
 	FirstPassFile = ss.str();
 	report.open(FirstPassFile.c_str());
@@ -624,6 +656,7 @@ int main(int argc, char* argv[]) {
 		return 0;
 	}
 
+	// Also writes a depth inclusive fastq that is named TempOverlap/{namestub}.fastqd
 	ofstream Depreport;
 	FirstPassFile += "d";
 	Depreport.open(FirstPassFile.c_str());
@@ -671,6 +704,7 @@ int main(int argc, char* argv[]) {
 	}
 
 
+	// Remake Mutations hash table with forward and reverse unique kmers
 	while (getline(MutHashFile, L1)) {
 		vector<string> temp;
 	/*	temp = Util::Split(L1, '\t');
@@ -705,6 +739,12 @@ int main(int argc, char* argv[]) {
 	}
 	cout << "HashSize = " << HashSize << endl; 
 
+	// Iterate through fastq lines and check to see if they're long enough after removing end Ns,
+	// and that they pass bit flag checks
+	// If they do, add to sequenes vector, if not add to unsequenes vector
+	// Also tallies good and bad reads
+	// Note: this could be parallelized - each read is evaluated independently
+	// Just need to make sure that arrays are kept in relative order
 	while (getline(fastq, L1)) {
 		counter++;
 		//cout << L1 << endl; 
@@ -712,53 +752,77 @@ int main(int argc, char* argv[]) {
 			cout << "Read in " << counter << " reads, with " << goodreads << " aligned reads, " << unalignedCounter<< " unaligned reads, " << lowMapQual << "low map qual and " << other <<" other with rejected " << Rejects
 					 << " reads\r";
 		}
+		
+		// Split fields from line
 		vector<string> temp = Util::Split(L1, '\t');
+		
+		// Replace any low quality bases with N
 		temp[9] = ReplaceLowQBase(temp[9],temp[10], 10); 
+
 		//temp[9] = TrimKends(temp[9], temp[10], 15);
 		int ReadSize = temp[10].size();
+
+		// Extract flag frim first SAM column and convert to binary
 		bool b[16];
 		int v = atoi(temp[1].c_str()); 
-
-		//TODO: understand this syntax
 		for (int j = 0; j < 16; ++j) 
 		{
 			b[j] = 0 != (v & (1 << j));
 		}
+
 		//if (DupCheck.count(temp[9]) > 0)
 		//{
 		//	cout << "skipping exact match sequence " << L1 << endl; 
 		//}
 		//else 
+		
 		{
 			int lowq = NumLowQbases(temp[10], 20);
 			int length=temp[10].length(); 
 			DupCheck[temp[9]] == true; 
+
+			// Reject read if:
+				// Secondary alignment (bit 256)
+				// Supplementary alignment (bit 2048)
+				// PCR or optical duplicate (bit 1024)
+				// Read length < 50
+				// Low quality bases > 33% of read
 			if (b[8] or b[11] or b[10] or temp[9].length() < 50 or ((double) lowq / (double) length > 0.33)) 
 			{
 				//cout << "rejected" << endl; 
 				//cout << L1 << endl; 
 				Rejects++;
 			} 
-			else if (b[2])//or atoi(temp[4].c_str())<5) 
+			else if (b[2]) 
 			{
+				// If segment unmapped (bit 4)
 				if (b[2])
 					unalignedCounter++;
+				// If READ mapping quality < 5
 				else if (atoi(temp[4].c_str())<5)
 					lowMapQual++;
 				else
 					other++; 
-				string L4 = temp[10];
-				string L2 = temp[9]; ////////sequence//////////
+				string L4 = temp[10]; // Base Qualities
+				string L2 = temp[9]; // Sequence
+
+				// Trim Ns off the ends of the read
 				L2 = TrimNends(L2, L4);
+				// Count how many non-N hashes are in the read
 				int hashes = CountHashes(L2);
-				//cout << "poorly mapped read " << L1 << endl; 
-				//cout << "with Hash = " << hashes << endl; 
+
+				// If the trimmed sequence is > 60% of the original read size
 				if ((double)L2.size() / (double)ReadSize > .6) 
 				{
 					ReadSize = L2.size();
 					lines++;
 					Unsequenes.push_back(L2);
 					Unqual.push_back(L4);
+
+					// If we do have hashes matching this read,
+					// check the bit masks if read has "multiple segments in sequencing"
+					// or if "SEQ is being reverse complemented"
+					// TODO: I don't know what these conditions mean, from SAM specs
 					if (hashes > 0)
 					{
 						if (b[0]== 0)
@@ -863,6 +927,7 @@ int main(int argc, char* argv[]) {
 	int FoundMatch = 0;
 	St = clock();
 
+	// Iterate through sequences, try to align each with Align3
 	for (std::vector<string>::size_type i = 0; i < sequenes.size(); i++) 
 	{
 		string A = sequenes[i];
@@ -901,6 +966,7 @@ int main(int argc, char* argv[]) {
 		int k = -1;
 		int bestIndex = -1;
 		bool PerfectMatch = false;
+		// Booya is best score found for forward strand
 		int booya = Align3(sequenes, qual, A, Aqual, i, k, bestIndex, MinPercent, PerfectMatch, MinOverlap, Threads);
 		if (FullOut) {
 			cout << "best forward score is " << booya << " k is " << k << endl;
@@ -913,7 +979,8 @@ int main(int argc, char* argv[]) {
 			string revAstr = FlipStrands(Astr);
 			int revk = -1;
 			int revbestIndex = -1;
-			int revbooya =
+			int revbooya = -1;
+			// Now find best score for reverse strand
 			Align3(sequenes, qual, revA, revAqual, i, revk, revbestIndex, MinPercent, PerfectMatch, MinOverlap, Threads);
 			if (FullOut) {
 				cout << "best reverse score is " << revbooya << " k is " << revk
@@ -932,7 +999,7 @@ int main(int argc, char* argv[]) {
 
 		} else {
 			if (FullOut) {
-				cout << "Perfect Match Found, Skipping Referse Search" << endl;
+				cout << "Perfect Match Found, Skipping Reverse Search" << endl;
 			}
 		}
 
@@ -953,8 +1020,8 @@ int main(int argc, char* argv[]) {
 					cout << "found match at " << k << endl;
 
 					for (int z = 0; z < k; z++) {
-			cout << "+";
-		}
+						cout << "+";
+					}
 
 					cout << A << endl << B << endl;
 
@@ -971,14 +1038,14 @@ int main(int argc, char* argv[]) {
 					cout << A << endl;
 
 					for (int z = 0; z < abs(k); z++) {
-			cout << "-";
-		}
+						cout << "-";
+					}
 
 					cout << B << endl;
 
 					for (int z = 0; z < abs(k); z++) { 
-			cout << "-";
-		}
+						cout << "-";
+					}
 
 					for (int z = 0; z < Bdep.length(); z++) {
 						int bam = Bdep.c_str()[z];
@@ -998,14 +1065,14 @@ int main(int argc, char* argv[]) {
 						 << " Bd = " << Bdep.size() << endl;
 			}
 
-			string combined =
-	ColapsContigs(A, B, k, Aqual, Bqual, Adep, Bdep, Astr, Bstr);
+			string combined = ColapsContigs(A, B, k, Aqual, Bqual, Adep, Bdep, Astr, Bstr);
 
 			if (combined.size() != Bdep.size()) {
 				cout << " ERRPR combined is the wrong size\n	C= " << combined.size()
 						 << " Bd = " << Bdep.size() << endl;
 			}
 
+			// Update the sequences, quality, depth, and strand vectors with the new combined sequence
 			sequenes[bestIndex] = combined;
 			qual[bestIndex] = Bqual;
 			depth[bestIndex] = Bdep;
@@ -1032,10 +1099,12 @@ int main(int argc, char* argv[]) {
 			cout << ">>>>" << sequenes[i] << endl;
 		}
 
+		// Iterate through combined sequences
 		if (sequenes[i] != "moved" && sequenes[i].size() >= 95) {
 			string rDep = depth[i];
 			int maxDep = -1;
 
+			// Find the max depth of the read
 			for (int z = 0; z < rDep.size(); z++) {
 				unsigned char bam = rDep.c_str()[z];
 				if ((int)bam > maxDep) {
@@ -1043,6 +1112,7 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
+			// Check that our max depth is greater than 3 (hard coded for now)
 			if (maxDep >= MinCoverage /*&& maxDep >= 2*/) {
 
 				if (sequenes[i].size() != qual[i].size() && qual[i].size() != depth[i].size()) {
@@ -1057,21 +1127,26 @@ int main(int argc, char* argv[]) {
 				count++;
 				int F = 0;
 				int R = 0;
+				// Compress strand to make unique index for fastq file
 				compresStrand(strand[i], F, R);
+
+				// Write out to fastq
 				report << "@NODE_" << argv[6] << "_" << i << "_L=" << sequenes[i].size() << "_D=" << maxDep  << ":" << F << ":" << R << ":" << endl;
 				report << sequenes[i] << endl;
 				report << "+" << endl;
 				report << qual[i] << endl;
 
+				// Write out to depth fastq
 				Depreport << "@NODE_" << argv[6] << "_" << i<< "_L=" << sequenes[i].size() << "_D=" << maxDep  << ":" << F << ":" << R << ":" << endl;
 				Depreport << sequenes[i] << endl;
 				Depreport << "+" << endl;
 				Depreport << qual[i] << endl;
 				Depreport << strand[i] << endl;
+
+				// Write out depth of each base
 				unsigned char C = depth[i].c_str()[0];
 				int booya = C;
 				Depreport << booya;
-
 				for (int w = 1; w < depth[i].size(); w++) {
 					C = depth[i].c_str()[w];
 					booya = C;

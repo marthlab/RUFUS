@@ -1,0 +1,2 @@
+      1 Error no model file given, not worring abou this now
+      1 Error, ArgFile could not be openedReading in Sam File

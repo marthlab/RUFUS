@@ -54,7 +54,7 @@ function get_ref_path() {
 	case "$build" in
 		"GRCh38")
 			# TODO: need to actually put reference in this spot
-			echo "/opt/RUFUS/resources/references/GRCh38_full_analysis_set_plus_decoy_hla.fa"
+			echo "${RUFUS_ROOT}/resources/references/GRCh38_full_analysis_set_plus_decoy_hla.fa"
 			;;
 		*)
 			echo "Genome $build not yet supported"

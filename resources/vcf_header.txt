@@ -1,0 +1,40 @@
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=AK,Number=1,Type=Integer,Description="Alternate Kmer Count">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total Kmer depth across the variant">
+##FORMAT=<ID=RO,Number=1,Type=Integer,Description="Mode of reference kmer counts">
+##FORMAT=<ID=AO,Number=1,Type=Integer,Description="Mode of alt kmer counts">
+##INFO=<ID=PH,Number=1,Type=String,Description="If read backed phasing is possible, the name of the sample that the variant was inherited from">
+##INFO=<ID=CP,Number=1,Type=String,Description="position of the call within the assembled contig">
+##INFO=<ID=EN,Number=1,Type=String,Description="in development, something to do with entropy">
+##INFO=<ID=FEX,Number=1,Type=String,Description="Filters failed and value">
+##INFO=<ID=SB,Number=4,Type=Integer,Description="Strand Bias of the assembled contig">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of SV detected">
+##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Length of SV detected">
+##INFO=<ID=END,Number=1,Type=Integer,Description="END of SV detected">
+##INFO=<ID=AO,Number=1,Type=Integer,Description="Alternate allele observations, with partial observations recorded fractionally">
+##INFO=<ID=HD,Number=.,Type=String,Description="Hash counts for each k-mer overlapping the vareint, -1 indicates no info">
+##INFO=<ID=RN,Number=1,Type=String,Description="Name of contig that produced the call">
+##INFO=<ID=FS,Number=1,Type=String,Description="Full score, supporting kmers possible varient kmers based on sequence">
+##INFO=<ID=MQ,Number=1,Type=Float,Description="Mapping quality of the contig that created the call">
+##INFO=<ID=cigar,Number=1,Type=String,Description="Cigar string for the contig that created the call">
+##INFO=<ID=VT,Number=1,Type=String,Description="Variant Type">
+##INFO=<ID=CVT,Number=1,Type=String,Description="Compressed Variant Type">
+##INFO=<ID=NR,Number=1,Type=Integer,Description="Number of total reads in target region">          
+##INFO=<ID=NH,Number=1,Type=Integer,Description="Number of alu heads in target region">       
+##INFO=<ID=NT,Number=1,Type=Integer,Description="Number of polyA tails in target region">
+##INFO=<ID=LT,Number=1,Type=Integer,Description="Longest polyA tail in target region">
+##INFO=<ID=TB,Number=1,Type=Integer,Description="Is tail left bound, right bound, or double bound">
+##INFO=<ID=AS,Number=1,Type=Integer,Description="Number of alignment segments in the contig">
+##INFO=<ID=MT,Number=1,Type=String,Description="Mobil element sequence inserted">
+##INFO=<ID=SVID,Number=1,Type=String,Description="Unique ID given to an SV event with multiple break-ends so it can be quickly identified">
+##INFO=<ID=SOURCE,Number=1,Type=String,Description="Location in the genome where the inserted sequence came from">
+##INFO=<ID=SVDES,Number=1,Type=String,Description="If available RUFUS will interpret the SV type for you">
+##INFO=<ID=MATEID,Number=1,Type=String,Description="If available, the id of the call that is the mate of this one">
+##FILTER=<ID=PA,Description="PoorAlignment">
+##FILTER=<ID=PLC,Description="Parents are at low coverage in this region, can't be sure of genotype">
+##FILTER=<ID=LCH,Description="Parents have hashes showing variant at low coverage, likely inherited">
+##FILTER=<ID=SB,Description="Contig fails string bias filter">
+##FILTER=<ID=LMQ,Description="Low mapping quality">
+##ALT=<ID=INS:ME:ALU,Description="Insertion of ALU element">
+##ALT=<ID=INS:ME:L1,Description="Insertion of L1 element">
+##ALT=<ID=INS:ME:MOB,Description="Insertion of ALU or L1element">

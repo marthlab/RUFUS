@@ -3,7 +3,9 @@ set -e
 
 #LOCAL_TESTING_UTIL_PATH=/home/ubuntu/RUFUS/singularity/launch_utilities/
 #UTIL_PATH=$LOCAL_TESTING_UTIL_PATH
-UTIL_PATH=/opt/RUFUS/singularity/launch_utilities/
+
+: "${RUFUS_ROOT:=/opt/RUFUS}"
+UTIL_PATH=${RUFUS_ROOT}/singularity/launch_utilities/
 
 GENOME_HELPERS_PATH=${UTIL_PATH}genome_helpers.sh
 . $GENOME_HELPERS_PATH
@@ -51,6 +53,22 @@ function get_chunk_region() {
 
   # Write out
   echo "$chr:${chunkStart}-${chunkEnd}"
+}
+
+# Returns 1000g sub_dir/file_name for given region
+function get_1kg_file() {
+  local chunkNum=$1
+  local chunkSize=$2
+  local build=$3
+
+  reg=$(get_chunk_region $chunkNum $chunkSize $build)
+  fmtd_reg=$(echo $reg | sed 's/[:-]/_/g')
+
+  if [ "$chunkSize" = "1000" ]; then
+    echo "1mb/${fmtd_reg}.Jhash"
+  else
+    echo ""
+  fi
 }
 
 # Returns the number of chunks for the given genome build

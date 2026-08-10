@@ -177,6 +177,7 @@ int main(int argc, char* argv[]) {
     bool Multiple = false;
     vector<string> temp = Util::Split(L6, ' ');
 
+    // todo: why are we iterating through same data twice?
     for (vector<string>::size_type i = 0; i < temp.size(); i++) {
       unsigned char C = atoi(temp[i].c_str());
       depths += C;

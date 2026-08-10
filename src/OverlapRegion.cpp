@@ -35,7 +35,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 	int bestScore = 0;
 	int NumReads = sequenes.size();
 	int start = Ai + 1;
-	int end = sequenes.size();
+	int end = sequenes.size(); // todo: instead of all sequences here, only do next 5 reads
 
 	#pragma omp parallel for shared(index, overlap, bestScore) num_threads(Threads)
 	for (int j = start; j < end; j++) 
@@ -45,27 +45,21 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 		int LocalBestScore = 0;
 		int LocalIndex = -1;
 		int LocalOverlap = 0;
+		bool LocalPerfectMatch = false;
 		
 		string A; 
-		int Alen; 
 		string Aq; 
-		//#pragma omp critical
-		{
-			A = Ap;
-			Aq = Aqp;
-		}
-		Alen = A.length();
+		A = Ap;
+		Aq = Aqp;
+		int Alength = A.length();
+
 		string B;
 		string Bq;
+		B = sequenes[j];
+		Bq = quals[j];
 		int Blength = -1;
-		int Alength = Alen;
-		int k;
-		//#pragma omp critical
-		{
-			B = sequenes[j];
-			Bq = quals[j];
-		}
 		Blength = B.length();
+
 		int window = -1;
 		int longest = -1;
 		bool Asmaller = true;
@@ -80,6 +74,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 			longest = Alength;
 		}
 
+		int k;	
 		int MM = window - (window * minPercent);
 		int Acount = 0;
 		int Bcount = 0;
@@ -99,7 +94,7 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 					score = -1;
 					break;
 				}
-			} //end of for loop (k=0)
+			}
 			
 			if (Asmaller) {
 				Acount++;
@@ -125,13 +120,13 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 				}
 
 				if (score == window) {
-					PerfectMatch = true;
+					LocalPerfectMatch = true;
 					break;
 				}
 			}
-		} // end of top level for loop (i=0)
+		}
 
-		if (PerfectMatch == false) {
+		if (LocalPerfectMatch == false) {
 			for (int i = window - 1; i >= MinOverlap; i--) {
 
 				if (verbose) {
@@ -173,8 +168,8 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 							break;
 						}
 					}
-				} // end of top level if loop
-			} // end of for loop
+				} 
+			} 
 
 			for (int i = window - 1; i >= MinOverlap; i--) {
 
@@ -220,10 +215,15 @@ int Align3(vector<string>& sequenes, vector<string>& quals, string Ap,string Aqp
 
 #pragma omp critical(updateCounts)
 		{
-			if (bestScore < LocalBestScore) {
-				bestScore = LocalBestScore;
-				index = LocalIndex;
-				overlap = LocalOverlap;
+			if (bestScore < LocalBestScore || 
+        		(bestScore == LocalBestScore && LocalIndex < index)) {  // Tie-breaker to ensure consistent results			
+					bestScore = LocalBestScore;
+					index = LocalIndex;
+					overlap = LocalOverlap;
+			}
+			// Only want to update this logic if we have found a perfect match
+			if (LocalPerfectMatch) {
+				PerfectMatch = true;
 			}
 		}
 	}

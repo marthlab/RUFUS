@@ -1,0 +1,6 @@
+##fileformat=VCFv4.2
+##INFO=<ID=CLASS,Number=1,Type=String,Description="Planted variant class">
+##contig=<ID=chr20,length=200000>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr20	20000	.	A	C	.	.	CLASS=SNV
+chr20	40000	.	ACAGTTTATTA	A	.	.	CLASS=DEL10

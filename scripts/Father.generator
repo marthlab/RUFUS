@@ -1,2 +1,0 @@
-samtools view -F 3328 /uufs/chpc.utah.edu/common/home/u0991464/RUFUS.test.set/Family1.father.bam
-

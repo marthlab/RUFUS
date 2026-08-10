@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+################################################################################
+# Simple RUFUS wrapper
+#   Run per shard. Requires a region file in TSV format with regions grouped
+#   by shards and the index for the shard to run the corresponding regions.
+#   SJG added -p flag for testing purposes
+################################################################################
+
+usage() {
+  cat <<EOF
+Usage: $0 -s subject.cram -r reference.fasta -f regions.tsv -i SHARD_INDEX -d PATH_RUFUS_DIR [options]
+
+Required:
+  -s   Subject BAM/CRAM (input file) with index file .crai/.bai
+  -r   Reference FASTA (used with -cr)
+  -f   Region file (TSV: shard_index <TAB> region, e.g. chr1:1-1000000)
+
+        Example:
+            1    chr1:1-1000000
+            1    chr1:1000001-2000000
+            1    chr1:2000001-3000000
+            ...
+            2    chr5:1-1000000
+            2    chr5:1000001-2000000
+            2    chr5:2000001-3000000
+            ...
+
+  -i   Shard index to use to select set of regions
+  -d   Directory where Jhash files live (PATH_RUFUS_DIR)
+       Expect subdirs for Control and KG1 as follows:
+
+        - <PATH_RUFUS_DIR>
+            - CONTROL
+                - v1.0
+            - KG1
+                - v3.0
+
+Optional:
+  -m   KMER_DEPTH_CUTOFF (default: 5)
+  -k   KMER_LENGTH (default: 25)
+  -t   THREADS per region (default: 8)
+  -g   KG1 hash version (default: v3.0)
+  -c   Control hash version (default: v1.0)
+  -o   Output prefix <OUTPUT_PREFIX>.vcf.gz (default: output)
+  -w   Passed work dir
+EOF
+  exit 1
+}
+
+# Defaults
+INPUT_CRAM=""
+REFERENCE=""
+REGION_FILE=""
+SHARD_INDEX=""
+PATH_RUFUS_DIR=""
+KMER_DEPTH_CUTOFF=5
+KMER_LENGTH=25
+THREADS=8
+KG1_VERSION="v3.0"
+CONTROL_VERSION="v1.0"
+OUTPUT_PREFIX="output"
+PASSED_WORK_DIR=""
+
+while getopts "s:r:f:i:d:p:m:k:t:g:c:o:h" opt; do
+  case "$opt" in
+    s) INPUT_CRAM="$OPTARG" ;;
+    r) REFERENCE="$OPTARG" ;;
+    f) REGION_FILE="$OPTARG" ;;
+    i) SHARD_INDEX="$OPTARG" ;;
+    d) PATH_RUFUS_DIR="$OPTARG" ;;
+    p) PASSED_WORK_DIR="$OPTARG" ;;
+    m) KMER_DEPTH_CUTOFF="$OPTARG" ;;
+    k) KMER_LENGTH="$OPTARG" ;;
+    t) THREADS="$OPTARG" ;;
+    g) KG1_VERSION="$OPTARG" ;;
+    c) CONTROL_VERSION="$OPTARG" ;;
+    o) OUTPUT_PREFIX="$OPTARG" ;;
+    h) usage ;;
+    *) usage ;;
+  esac
+done
+
+# Auto-compute number of parallel jobs: total CPUs / threads per region
+TOTAL_CPUS=$(nproc)
+JOBS=$(( TOTAL_CPUS / THREADS ))
+
+# Ensure at least 1 job
+if [[ "$JOBS" -lt 1 ]]; then
+    JOBS=1
+fi
+
+echo "INFO: Auto-computed JOBS = $JOBS   (CPUs=$TOTAL_CPUS, THREADS per region=$THREADS)"
+
+# Required checks
+[[ -n "$INPUT_CRAM" ]]     || { echo "Error: -s subject CRAM/BAM is required"; usage; }
+[[ -n "$REFERENCE" ]]      || { echo "Error: -r reference FASTA is required"; usage; }
+[[ -n "$REGION_FILE" ]]    || { echo "Error: -f region file is required"; usage; }
+[[ -n "$SHARD_INDEX" ]]    || { echo "Error: -i shard index is required"; usage; }
+[[ -n "$PATH_RUFUS_DIR" ]] || { echo "Error: -d PATH_RUFUS_DIR is required"; usage; }
+
+[[ -f "$INPUT_CRAM" ]]   || { echo "Error: subject file $INPUT_CRAM not found"; exit 1; }
+[[ -f "$REFERENCE" ]]    || { echo "Error: reference $REFERENCE not found"; exit 1; }
+[[ -f "$REGION_FILE" ]]  || { echo "Error: region file $REGION_FILE not found"; exit 1; }
+
+# Check secondary files
+  # CRAM/BAM
+  if [[ "$INPUT_CRAM" == *.cram ]]; then
+    if [[ ! -f "${INPUT_CRAM}.crai" ]]; then
+      echo "Error: missing index for ${INPUT_CRAM}. Expected ${INPUT_CRAM}.crai"
+      exit 1
+    fi
+  elif [[ "$INPUT_CRAM" == *.bam ]]; then
+    if [[ ! -f "${INPUT_CRAM}.bai" ]]; then
+      echo "Error: missing index for ${INPUT_CRAM}. Expected ${INPUT_CRAM}.bai"
+      exit 1
+    fi
+  else
+    echo "Error: unsupported file type (must be .bam or .cram): $INPUT_CRAM"
+    exit 1
+  fi
+
+  # FASTA
+  [[ -f "${REFERENCE}.fai" ]]    || { echo "Error: .fai index file for $REFERENCE not found"; exit 1; }
+
+# Check Tools
+command -v bcftools >/dev/null 2>&1 || { echo "Error: bcftools not found in PATH"; exit 1; }
+command -v tabix    >/dev/null 2>&1 || { echo "Error: tabix not found in PATH"; exit 1; }
+
+# Define run function
+run_shard_region() {
+    local region="$1"
+
+    # Format region to match Jhash naming: chr1:1-1000000 -> chr1_1_1000000
+    local region_fmt
+    region_fmt=$(echo "$region" | tr ':-' '_')
+
+    # Build Jhash paths
+    #   Example: chr1_1_1000000.150.1KG_v3.0.Jhash
+    #            chr1_1_1000000.2.control_v1.0.Jhash
+    local kg1_hash="${PATH_RUFUS_DIR}/KG1/${KG1_VERSION}/${region_fmt}.150.1KG_${KG1_VERSION}.Jhash"
+    local control_hash="${PATH_RUFUS_DIR}/CONTROL/${CONTROL_VERSION}/${region_fmt}.2.control_${CONTROL_VERSION}.Jhash"
+
+    # Existence checks
+    [[ -f "$kg1_hash" ]]      || { echo "Error: KG1 hash not found: $kg1_hash"; exit 1; }
+    [[ -f "$control_hash" ]]  || { echo "Error: control hash not found: $control_hash"; exit 1; }
+
+    echo "==========================================="
+    echo "INFO: REGION           = $region"
+    echo "INFO: REGION_FMT       = $region_fmt"
+    echo "INFO: KG1 hash         = $kg1_hash"
+    echo "INFO: Control hash     = $control_hash"
+    echo "INFO: KMER_DEPTH       = $KMER_DEPTH_CUTOFF"
+    echo "INFO: KMER_LENGTH      = $KMER_LENGTH"
+    echo "INFO: THREADS          = $THREADS"
+    echo "INFO: PASSED_WORK_DIR  = $PASSED_WORK_DIR"
+    docker exec -w /host/${PASSED_WORK_DIR} rufus-worker $RUFUS_ROOT/runRufus.sh \
+      -s "$INPUT_CRAM" \
+      -r "$REFERENCE" \
+      -m "$KMER_DEPTH_CUTOFF" \
+      -k "$KMER_LENGTH" \
+      -t "$THREADS" \
+      -L -vs \
+      -e "$kg1_hash" \
+      -e "$control_hash" \
+      -R "$region" \
+      || { echo "Error: RUFUS failed for region $region"; exit 1; }
+}
+
+# Run
+echo "INFO: Running shard index $SHARD_INDEX from $REGION_FILE"
+echo "INFO: Parallel region jobs (JOBS) = $JOBS"
+
+# Collect regions for this shard into a temp file
+TMP_REGIONS="$(mktemp rufus_regions.${SHARD_INDEX}.XXXXXX)"
+trap 'rm -f "$TMP_REGIONS"' EXIT
+
+awk -v idx="$SHARD_INDEX" 'NF >= 2 && $1 == idx { print $2 }' "$REGION_FILE" > "$TMP_REGIONS"
+
+if [[ ! -s "$TMP_REGIONS" ]]; then
+    echo "Warning: no regions found in $REGION_FILE for shard index $SHARD_INDEX" >&2
+    exit 0
+fi
+
+# Export function + env so xargs sub-shells can see them
+export -f run_shard_region
+export PATH_RUFUS_DIR KG1_VERSION CONTROL_VERSION INPUT_CRAM REFERENCE \
+       KMER_DEPTH_CUTOFF KMER_LENGTH THREADS PASSED_WORK_DIR
+
+# Run each region in parallel; each region gets full -t "$THREADS" inside runRufus.sh
+xargs -a "$TMP_REGIONS" -n 1 -P "$JOBS" -I {} bash -c 'run_shard_region "$@"' _ {}
+
+# Collect shard outputs (sorted, safe if none)
+shopt -s nullglob
+mapfile -t REGIONS < <(
+    printf "%s\n" ${PASSED_WORK_DIR}temp.RUFUS.Final.*.vcf.gz |
+    sort -V
+)
+shopt -u nullglob
+(( ${#REGIONS[@]} > 0 )) || { echo "Error: no region outputs found"; exit 1; }
+
+# Merging annotated shards using bcftools
+echo "Merging ${#REGIONS[@]} annotated regions..."
+MERGED="merged.vcf"
+FINAL_GZ="${OUTPUT_PREFIX}.vcf.gz"
+
+echo "-- BCFTools ---------------------------"
+bcftools concat -a -D -O v -o "$MERGED" "${REGIONS[@]}" \
+  || { echo "Error: bcftools concat failed"; exit 1; }
+
+bcftools sort -T "tmp_bcftools.XXXXXX" -O z -o "$FINAL_GZ" "$MERGED" \
+  || { echo "Error: bcftools sort failed"; exit 1; }
+
+tabix -f -p vcf "$FINAL_GZ" \
+  || { echo "Error: tabix failed"; exit 1; }
+echo "-----------------------------------------"
+
+echo "Done: $FINAL_GZ"

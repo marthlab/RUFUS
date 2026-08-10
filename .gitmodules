@@ -1,0 +1,3 @@
+[submodule "src/modifiedJellyfish"]
+	path = src/modifiedJellyfish
+	url = https://github.com/stefinfection/modified-jellyfish.git

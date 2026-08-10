@@ -1,0 +1,5 @@
+RUFUS_BRANCH="main"
+RUFUS_VERSION="v1.2.0"
+
+# todo: put RDIR in here
+# todo: put post process version here

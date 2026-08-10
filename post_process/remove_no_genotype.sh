@@ -1,27 +1,31 @@
 #!/bin/bash
-
-# NOTE: THIS ONLY WORKS FOR A RUFUS RUN WITH TWO SAMPLE COLUMNS IN VCF - i.e. ONE NORMAL ONE TUMOR
+# Works for any number of sample columns in VCF
+: "${WORK_DIR:?WORK_DIR must be set}"
 
 input_file=$1
-output_file=$2
 
-# Process the gzipped VCF file
-zcat "$input_file" | awk -F'\t' '
+cat "$input_file" | awk -F'\t' '
 BEGIN {
-    skipped_lines = 0;
+    expected_cols = 0
 }
+
+# Always print header lines
+/^##/ {
+    print
+    next
+}
+
+# Column header: record expected column count and print
+/^#CHROM/ {
+    expected_cols = NF
+    print
+    next
+}
+
+# Data lines: only print if column count matches
 {
-    if ($0 ~ /^#/) {
-        print $0 > output_file;
-    } else if (NF == 11) {
-        print $0 > output_file;
-    } else {
-        skipped_lines++;
+    if (expected_cols > 0 && NF == expected_cols) {
+        print
     }
 }
-END {
-    print skipped_lines " lines were not printed because they did not have the genotype columns.";
-}
-' output_file="$output_file"
-
-bgzip $output_file
+'

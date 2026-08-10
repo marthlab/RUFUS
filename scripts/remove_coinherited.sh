@@ -1,5 +1,12 @@
-#!/bin/bash                                                                            
+#!/bin/bash                                                                                                                         
 
+module load bcftools
+module load htslib
+module load vt
+module load samtools
+module load bwa
+
+# UPDATED TO NEW VERSION SJG 09Aug2024
 # This script removes inherited variants called by rufus which lie on the same contig as
 # a somatic variant. It accomplishes this task by performing a pileup and variant call
 # in the control bam for each of the rufus-identified variants, then taking the complement
@@ -12,10 +19,11 @@ SAMPLE_NAME=$3     # Sample name, used in vcf output file name
 ARG_LIST=("$@")
 CONTROL_BAM_LIST=("${ARG_LIST[@]:3}") # Remaining args, all control bams
 
-echo "Arguments to remove coinherited script: $ARG_LIST"
+echo "Arguments provided to inherited removal script: $@"
+echo "Control bam list is ${ARG_LIST[@]:3}"
 
 # static vars
-OUT_VCF="$SAMPLE_NAME.FINAL.vcf.gz"
+OUT_VCF="$SAMPLE_NAME.FINAL.normalized.vcf.gz"
 CONTROL_ALIGNED="temp_aligned.bam"
 CONTROL_VCF="isec_control.vcf.gz"
 
@@ -41,21 +49,21 @@ for CONTROL in "${CONTROL_BAM_LIST[@]}"; do
     fi
     
     #run pileup and call variants
-    bcftools mpileup -d600 -T $OUT_VCF -f $REFERENCE_FILE $CONTROL_BAM | bcftools call -cv -Oz -o $CONTROL_VCF 
+    bcftools mpileup -d600 -T $OUT_VCF -f $REFERENCE_FILE $CONTROL_BAM | $bcftools call -cv -Oz -o $CONTROL_VCF 
     bcftools index -t $CONTROL_VCF
     	
     #intersect the control vcf with formatted rufus vcf
     bcftools isec -Oz -w1 -n=1 -p $ISEC_OUT_DIR $OUT_VCF $CONTROL_VCF
         
     # save the new vcf as rufus final vcf
-	OUT_VCF=$ISEC_OUT_DIR/0000.vcf
+	OUTFILE=$ISEC_OUT_DIR/0000.vcf.gz
+    OUT_INDEX=$ISEC_OUT_DIR/0000.vcf.gz.tbi
+
+    cp $OUTFILE $OUT_DIR/"$SAMPLE_NAME.FINAL.no_inherited.vcf.gz" 
+    cp $OUT_INDEX $OUT_DIR/"$SAMPLE_NAME.FINAL.no_inherited.vcf.gz.tbi" 
 
     # clean up aligned control file, if it exists
 	if [ "$MADE_CONTROL_BAM" = true ]; then
     	rm $CONTROL_ALIGNED
 	fi
 done
-
-# Clean up files
-rm -rf $ISEC_OUT_DIR
-rm $CONTROL_VCF

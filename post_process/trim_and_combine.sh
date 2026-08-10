@@ -8,35 +8,42 @@
 # must be equal to those run for the piecemeal run.
 # Compresses and indexes the final file.
 
-# this is running inside of container so these dependencies should be available
-#module load bcftools
-#module load htslib
-
-cd /mnt
+# ENV override
+: "${RUFUS_ROOT:=/opt/RUFUS}"
 
 SUBJECT_FILE=$1
-CONTROL_STRING=$2
-WINDOW_SIZE=$3
+WINDOW_SIZE=$2
+shift
+shift
+CONTROLS=("$@")
+
+BCFTOOLS="/opt/bcftools/bcftools"
 
 COMBINED_VCF="temp.RUFUS.Final.${SUBJECT_FILE}.combined.vcf"
-COMBINED_PRE_VCF="temp.RUFUS.Prefiltered.${SUBJECT_FILE}.combined.vcf"
-COMBINED_SAMPLE_STRING="${SUBJECT_FILE}\t${CONTROL_STRING}"
+#COMBINED_PRE_VCF="temp.RUFUS.Prefiltered.${SUBJECT_FILE}.combined.vcf"
 
-SUPP_DIR="rufus_supplementals/"
+COMBINED_SAMPLE_STRING=""
+if [ "$CONTROL_STRING" == "internal" ]; then
+    COMBINED_SAMPLE_STRING="${SUBJECT_FILE}"
+else
+    COMBINED_SAMPLE_STRING=$(printf '%s' "$SUBJECT_FILE"; printf '\t%s' "${CONTROLS[@]}")
+fi
+
+#SUPP_DIR="rufus_supplementals/"
 
 # Headers that get written to vcf
 COMBINED_HEADER="combined.header"
 COMBINED_PRE_HEADER="combined.preheader"
 
 # Start of headers
-HEADER_START="/opt/RUFUS/post_process/file_stubs/combined.header.start"
-PRE_HEADER_START="/opt/RUFUS/post_process/file_stubs/combined.preheader.start"
+HEADER_STUB="$RUFUS_ROOT/resources/vcf_header.txt"
 
 # Records that get written to vcf (non-header)
 COMBINED_RECORDS="combined.records"
 COMBINED_PRE_RECORDS="combined.prerecords"
 
-NUM_CHRS=24
+contig_temp="contig_temp.txt"
+
 CHRS=(
 "1"  
 "2" 
@@ -94,7 +101,7 @@ CHR_LENGTHS=(
 
 # Initialize combined headers
 cat "$HEADER_START" > $COMBINED_HEADER
-cat "$PRE_HEADER_START" > $COMBINED_PRE_HEADER
+#cat "$PRE_HEADER_START" > $COMBINED_PRE_HEADER
 TEMP_TRIMMED="temp.trimmed"
 
 # Adjust chunk size to bp
@@ -116,23 +123,24 @@ do
             end_coord=$curr_len
         fi
 	
-		CURR_VCF="temp.RUFUS.Final.${SUBJECT_FILE}.chr${curr_chr}_${start_coord}_${end_coord}.vcf.gz"
-		CURR_PRE_VCF="${SUPP_DIR}temp.RUFUS.Prefiltered.${SUBJECT_FILE}.chr${curr_chr}_${start_coord}_${end_coord}.vcf.gz"
+        CURR_VCF="temp.RUFUS.Final.${SUBJECT_FILE}.chr${curr_chr}_${start_coord}_${end_coord}.vcf.gz"
+        #CURR_PRE_VCF="temp.RUFUS.Prefiltered.${SUBJECT_FILE}.chr${curr_chr}_${start_coord}_${end_coord}.vcf.gz"
         if [[ -f "${CURR_VCF}" ]]; then
-       
+
             # Write out trimmed region to final vcf
             bcftools view -r "chr${curr_chr}:${start_coord}-${end_coord}" "${CURR_VCF}" > $TEMP_TRIMMED
             bcftools view -H $TEMP_TRIMMED >> $COMBINED_RECORDS
-            bcftools view -h $TEMP_TRIMMED | grep "##contig" >> $COMBINED_HEADER 
-           
+            bcftools view -h $TEMP_TRIMMED | grep "##contig" >> $contig_temp
+
 			# Write out trimmed region to prefiltered vcf 
-            bcftools view -r "chr${curr_chr}:${start_coord}-${end_coord}" "${CURR_PRE_VCF}" > $TEMP_TRIMMED
-            bcftools view -H $TEMP_TRIMMED >> $COMBINED_PRE_RECORDS
-            bcftools view -h $TEMP_TRIMMED | grep "##contig" >> $COMBINED_PRE_HEADER 
+            #bcftools view -r "chr${curr_chr}:${start_coord}-${end_coord}" "${CURR_PRE_VCF}" > $TEMP_TRIMMED
+            #bcftools view -H $TEMP_TRIMMED >> $COMBINED_PRE_RECORDS
+            #bcftools view -h $TEMP_TRIMMED | grep "##contig" >> $contig_temp
+            #sort -V $contig_temp | uniq >> $COMBINED_PRE_HEADER
 
 	    	# Remove vcf and indexes
-	    	rm $CURR_VCF*
-	    	rm $CURR_PRE_VCF*
+	    	rm "$CURR_VCF"*
+	    	#rm $CURR_PRE_VCF*
         fi
     
         # Advance start coordinate
@@ -141,23 +149,27 @@ do
     echo "Done combining chr${curr_chr}"
 done
 
-cat $COMBINED_HEADER | uniq > $COMBINED_VCF
-echo -e "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t$COMBINED_SAMPLE_STRING" >> $COMBINED_VCF
-cat $COMBINED_RECORDS >> $COMBINED_VCF
+sort -hu $contig_temp >> "$COMBINED_HEADER"
+cat $COMBINED_HEADER | uniq > "$COMBINED_VCF"
+echo -e "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t$COMBINED_SAMPLE_STRING" >> "$COMBINED_VCF"
+cat $COMBINED_RECORDS >> "$COMBINED_VCF"
 
-cat $COMBINED_PRE_HEADER | uniq > $COMBINED_PRE_VCF
-echo -e "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t$COMBINED_SAMPLE_STRING" >> $COMBINED_PRE_VCF
-cat $COMBINED_PRE_RECORDS >> $COMBINED_PRE_VCF
+# cat $COMBINED_PRE_HEADER | uniq > $COMBINED_PRE_VCF
+# echo -e "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t$COMBINED_SAMPLE_STRING" >> $COMBINED_PRE_VCF
+# cat $COMBINED_PRE_RECORDS >> $COMBINED_PRE_VCF
 
+# todo: left off here - unsure why the combined vcf here is out of order and cannot be indexed...
+# maybe try to do a full redo of individual vcfs and try again?
 bgzip $COMBINED_VCF
 bcftools index -t "${COMBINED_VCF}.gz"
 
-bgzip $COMBINED_PRE_VCF
-bcftools index -t "${COMBINED_PRE_VCF}.gz"
+# bgzip $COMBINED_PRE_VCF
+# bcftools index -t "${COMBINED_PRE_VCF}.gz"
 
 # Clean up temp files
+rm $contig_temp
 rm $TEMP_TRIMMED
 rm $COMBINED_HEADER
-rm $COMBINED_PRE_HEADER
+# rm $COMBINED_PRE_HEADER
 rm $COMBINED_RECORDS
-rm $COMBINED_PRE_RECORDS
+#rm $COMBINED_PRE_RECORDS

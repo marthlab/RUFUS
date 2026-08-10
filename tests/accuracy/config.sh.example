@@ -1,0 +1,32 @@
+#!/bin/bash
+# tests/accuracy/config.sh.example
+#
+# The accuracy test scores RUFUS against a REAL COLO829 tumor/normal pair. That data is NOT stored in
+# this repo — it's too large (~100 GB CRAMs) and controlled-access. See README.md for what to fetch,
+# where, and how to lay it out.
+#
+# Copy this file to `config.sh` (git-ignored) and edit the paths for your site:
+#     cp config.sh.example config.sh
+# Both run_chr20.slurm and compare.sh source config.sh.
+
+# --- external data root: the directory holding crams/, ref/, and truth_set/ ---
+RUFUS_TEST_DATA=/uufs/chpc.utah.edu/common/HIPAA/u0746015/marth_software/RUFUS/resources/reg_test_files
+
+# --- container image to test. Pull it first, e.g.:
+#       apptainer pull rufus_stage.sif docker://stefinfection/rufus:stage
+#     Use :dev for a development run, :stage for the pre-release gate. ---
+RUFUS_SIF=/uufs/chpc.utah.edu/common/HIPAA/u0746015/marth_software/RUFUS/zenodo_images/rufus_dev.sif
+
+# --- inputs (see README.md for accessions / how to obtain) ---
+TUMOR_CRAM=$RUFUS_TEST_DATA/crams/SMHTCOLO829T-X-X-M45-A001-uwsc-SMAFIW2W6WLI-sentieon_bwamem_202308.01_GRCh38.aligned.sorted.cram
+NORMAL_CRAM=$RUFUS_TEST_DATA/crams/SMHTCOLO829BL-X-X-M45-A001-uwsc-SMAFIR3ZFBTN-sentieon_bwamem_202308.01_GRCh38.aligned.sorted.cram
+REF_FASTA=$RUFUS_TEST_DATA/ref/GCA_000001405.15_GRCh38_no_alt_analysis_set.fa
+TRUTH_VCF=$RUFUS_TEST_DATA/truth_set/SMaHT_COLO829_SNV_truth_set_v1.0.vcf.gz
+
+# --- region tested + pre-release pass threshold ---
+REGION=chr20
+MIN_RECALL=0.85          # gate: Tier1 recall must be >= this to PASS (provisional; dev baseline was 0.881)
+
+# --- SLURM: ALSO edit --account / --partition in the run_chr20.slurm header (SBATCH can't read config) ---
+SLURM_ACCOUNT=marth-rw
+SLURM_PARTITION=marth-rw

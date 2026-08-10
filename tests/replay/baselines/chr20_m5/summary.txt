@@ -1,0 +1,31 @@
+records:   1680
+
+FILTER:
+     1156 .
+      201 PA;
+      163 SB;
+       48 LCH;SB;
+       31 LCH;
+       24 PA;SB;
+       24 PA;LCH;
+        7 PLC;LCH;
+        6 PA;PLC;
+        5 PA;PLC;LCH;
+        3 PLC;LCH;SB;
+        3 PLC;
+        3 PASS
+        3 PA;LCH;SB;
+        1 PA;PLC;LCH;SB;
+        1 LMQ
+        1 LCH
+
+GT:
+     1675 .
+        4 0/1
+        1 1/1
+
+QUAL:
+  n=1680  mean=78.56  max=108.0000  >100=4  missing=0
+
+columns (should be constant):
+     1680 11
